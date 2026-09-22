@@ -1,0 +1,3 @@
+# Anagu — Besu node config
+# All runtime flags are passed via docker-compose.yml command line.
+# This file is kept for reference only.

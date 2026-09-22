@@ -1,0 +1,78 @@
+# =============================================================================
+# Anagu — .gitignore
+# =============================================================================
+
+# Environment variables — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+build/
+**/build/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Hardhat / Foundry artifacts and cache
+artifacts/
+**/artifacts/
+cache/
+**/cache/
+typechain-types/
+**/typechain-types/
+
+# Test coverage reports
+coverage/
+**/coverage/
+lcov.info
+*.lcov
+
+# Deployment records (contain addresses — commit intentionally if desired)
+contracts/deployments/
+
+# Next.js
+frontend/web/.next/
+frontend/web/out/
+
+# Expo / React Native
+frontend/mobile/.expo/
+frontend/mobile/.expo-shared/
+frontend/mobile/android/
+frontend/mobile/ios/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+logs/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Yarn
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*

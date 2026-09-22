@@ -1,0 +1,369 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "0.1 Create monorepo directory structure and root config files": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654833972
+      },
+      {
+        "executionId": "2ed48784-29fd-4406-ae41-29bd30ca49c2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654897732
+      },
+      {
+        "executionId": "2ed48784-29fd-4406-ae41-29bd30ca49c2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654990555
+      }
+    ],
+    "0.2 Write `docker-compose.yml` for Besu, Redis, and EMQX": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654835051
+      },
+      {
+        "executionId": "2ed48784-29fd-4406-ae41-29bd30ca49c2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654996269
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657522632
+      }
+    ],
+    "0.3 Create Besu QBFT genesis and config files": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654835450
+      },
+      {
+        "executionId": "2ed48784-29fd-4406-ae41-29bd30ca49c2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789655002276
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657535355
+      }
+    ],
+    "0.4 Scaffold NestJS backend with Supabase client": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654835852
+      },
+      {
+        "executionId": "2ed48784-29fd-4406-ae41-29bd30ca49c2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789655008761
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657524800
+      }
+    ],
+    "0.5 Scaffold Next.js web portal": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654836099
+      },
+      {
+        "executionId": "2ed48784-29fd-4406-ae41-29bd30ca49c2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789655018308
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657526121
+      }
+    ],
+    "0.6 Scaffold React Native Expo mobile app": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654836405
+      },
+      {
+        "executionId": "2ed48784-29fd-4406-ae41-29bd30ca49c2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789655023284
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657527145
+      }
+    ],
+    "0.7 Scaffold Hardhat contracts project and deploy a smoke-test contract to local Besu": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654836637
+      },
+      {
+        "executionId": "2ed48784-29fd-4406-ae41-29bd30ca49c2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789655028367
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657527695
+      }
+    ],
+    "Step 0 Checkpoint — Ensure all services are healthy and the Besu test transaction confirms before proceeding to Step 1.": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654837055
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657559227
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657578671
+      }
+    ],
+    "1.1 Create Supabase PostGIS SQL functions and parcels table migration": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654837331
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657588573
+      }
+    ],
+    "1.2 Implement `SpatialService` and `SpatialModule`": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654837572
+      }
+    ],
+    "1.3 Implement `AuditService` and `audit_trail` table": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654838289
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657589426
+      }
+    ],
+    "1.4 Expose spatial verification REST endpoint": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654839100
+      }
+    ],
+    "Step 1 Checkpoint — Ensure all spatial verification tests pass (both test sets) before proceeding to Step 2.": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654839254
+      }
+    ],
+    "2.1 Write `LandTitleNFT.sol` smart contract": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654839399
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657590223
+      }
+    ],
+    "2.2 Write `LandRegistry.sol` smart contract": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654839572
+      }
+    ],
+    "2.4 Write Hardhat deploy scripts for `LandTitleNFT` and `LandRegistry`": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654839755
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657591555
+      }
+    ],
+    "2.5 Implement `BlockchainService` and `BlockchainModule` in NestJS backend": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654839956
+      }
+    ],
+    "2.6 Create Supabase `land_titles` and `applications` table migrations": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654840304
+      },
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657590857
+      }
+    ],
+    "Step 2 Checkpoint — Ensure all six Hardhat test cases pass and gas cost of `revoke()` is measured before proceeding to Step 3.": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654840602
+      }
+    ],
+    "3.1 Implement `MqttService` and `MqttModule` in NestJS backend": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654840838
+      }
+    ],
+    "3.2 Implement `OracleService` and `OracleModule` in NestJS backend": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654841432
+      }
+    ],
+    "3.6 Implement `RevocationService` and `RevocationModule` in NestJS backend": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654841742
+      }
+    ],
+    "3.7 Implement offline queue in the React Native Expo mobile app": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654841970
+      }
+    ],
+    "Step 3 Checkpoint — Ensure Oracle and MQTT tests pass before proceeding to Step 4.": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654842273
+      }
+    ],
+    "4.1 Implement Supabase JWT authentication guard and RBAC system": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654842498
+      }
+    ],
+    "4.3 Implement `RegistrationPipelineService` and orchestrate the end-to-end pipeline": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654842713
+      }
+    ],
+    "4.4 Implement NestJS REST controllers for applications, approvals, and revocation": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654842920
+      }
+    ],
+    "4.6 Implement Registrar and Citizen views in the Next.js web portal": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654843127
+      }
+    ],
+    "4.7 Implement authentication, role navigation, and real-time MQTT updates in the mobile app": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654843450
+      }
+    ],
+    "Step 4 Checkpoint — Ensure the end-to-end pipeline test passes and all RBAC, audit, and MQTT integration tests are green before proceeding to Step 5.": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654843857
+      }
+    ],
+    "5.1 Implement `BaselineSimulatorService` in NestJS backend": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654844027
+      }
+    ],
+    "5.2 Implement fraud scenario test runner": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654844368
+      }
+    ],
+    "5.3 Implement processing latency instrumentation": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654844752
+      }
+    ],
+    "5.4 Implement on-chain storage overhead measurement": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654845153
+      }
+    ],
+    "5.6 Wire evaluation endpoints and produce result tables": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654845716
+      }
+    ],
+    "Final Checkpoint — Ensure all four fraud scenario tables, latency table, and storage table are populated with real measured data. Ensure all tests pass.": [
+      {
+        "executionId": "f37b4b89-b7db-414a-8d13-24ebd23e5ae2",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789654845889
+      }
+    ],
+    "0. Scaffold monorepo and wire infrastructure services": [
+      {
+        "executionId": "b91506d6-b26e-4c69-9743-5fb53fb0079d",
+        "chatSessionId": "sess_09beca20-b78f-4941-8230-087582aa7874",
+        "timestamp": 1789657535547
+      }
+    ]
+  }
+}
