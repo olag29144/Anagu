@@ -10,9 +10,11 @@
     "contracts"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev --workspace=frontend/web",
+    "build": "npm run build --workspace=frontend/web",
+    "start": "npm run start --workspace=frontend/web",
     "test": "npm run test --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
+    "lint": "npm run lint --workspace=frontend/web",
     "format": "npm run format --workspaces --if-present"
   },
   "engines": {

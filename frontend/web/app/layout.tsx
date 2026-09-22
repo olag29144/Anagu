@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Anagu — Land Administration Framework',
-  description: 'Permissioned land title registration and administration for Nigeria',
+  title: 'Anagu Land Administration',
+  description: 'Permissioned full-stack land title registration and administration system for Nigeria',
 };
 
 export default function RootLayout({

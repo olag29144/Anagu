@@ -1,0 +1,8 @@
+{
+  "name": "Anagu Land Administration",
+  "description": "Permissioned full-stack land title registration and administration system for Nigeria",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

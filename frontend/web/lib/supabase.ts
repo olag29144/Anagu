@@ -9,9 +9,8 @@ let client: ReturnType<typeof createSupabaseClient> | null = null;
  */
 export function createClient() {
   if (client) return client;
-  client = createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  );
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key';
+  client = createSupabaseClient(url, anonKey);
   return client;
 }
