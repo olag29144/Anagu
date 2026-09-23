@@ -3,33 +3,14 @@
   "version": "1.0.0",
   "description": "Anagu Land Administration Framework — permissioned full-stack land title system",
   "private": true,
-  "workspaces": [
-    "backend",
-    "frontend/web",
-    "contracts"
-  ],
   "scripts": {
-    "dev": "npm run dev --workspace=frontend/web",
-    "build": "npm run build --workspace=frontend/web",
-    "start": "npm run start --workspace=frontend/web",
-    "test": "npm run test --workspaces --if-present",
-    "lint": "npm run lint --workspace=frontend/web",
-    "format": "npm run format --workspaces --if-present"
+    "dev": "npm run dev --prefix frontend/web",
+    "build": "npm run build --prefix frontend/web",
+    "start": "npm run start --prefix frontend/web",
+    "lint": "npm run lint --prefix frontend/web"
   },
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
-  },
-  "devDependencies": {
-    "@nomicfoundation/hardhat-ethers": "^3.1.3",
-    "@nomicfoundation/hardhat-ignition-ethers": "^0.15.17",
-    "lodash": "^4.17.21",
-    "node-emoji": "^2.1.3",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
-  },
-  "dependencies": {
-    "iconv-lite": "^0.7.3",
-    "lucide-react": "^1.47.0"
   }
 }
