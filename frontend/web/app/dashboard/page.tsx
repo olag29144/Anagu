@@ -33,7 +33,9 @@ export default function DashboardPage() {
         .eq('user_id', session.user.id)
         .maybeSingle();
 
-      const role = (roleRow as { role?: string } | null)?.role;
+      const role =
+        (roleRow as { role?: string } | null)?.role ||
+        (session.user.user_metadata?.role as string | undefined);
 
       switch (role) {
         case 'citizen':

@@ -56,6 +56,11 @@ export function Footer() {
             </h4>
             <ul className="space-y-2.5 text-[#94A3B8]">
               <li>
+                <Link href="/register" className="hover:text-[#67E8F9] transition-colors font-medium text-[#38BDF8]">
+                  Register New Account
+                </Link>
+              </li>
+              <li>
                 <Link href="/citizen" className="hover:text-[#67E8F9] transition-colors">
                   Citizen Self-Service
                 </Link>

@@ -170,6 +170,19 @@ export default function LoginPage() {
             </button>
           </form>
 
+          {/* Registration navigation */}
+          <div className="mt-5 text-center">
+            <p className="text-xs text-[#94A3B8]">
+              Don&apos;t have a cadastral credential?{' '}
+              <Link
+                href="/register"
+                className="font-medium text-[#38BDF8] hover:text-[#67E8F9] hover:underline transition-colors"
+              >
+                Register new account
+              </Link>
+            </p>
+          </div>
+
           <div className="mt-6 pt-4 border-t border-[rgba(91,133,167,0.14)] text-center text-[11px] text-[#526174] font-mono">
             <span>Session governed by Nigerian Land Use Act (1978)</span>
           </div>

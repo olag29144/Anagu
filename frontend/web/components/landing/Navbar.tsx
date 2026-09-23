@@ -122,7 +122,14 @@ export function Navbar({ onNavigateSection }: NavbarProps) {
           </nav>
 
           {/* Action Button & Mobile Hamburger */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <Link
+              href="/register"
+              className="hidden sm:inline-flex items-center justify-center h-10 px-3.5 rounded-[8px] text-[13px] sm:text-[14px] font-medium text-[#94A3B8] hover:text-[#67E8F9] hover:bg-[#0A0F16] border border-transparent hover:border-[rgba(91,133,167,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38BDF8] transition-all duration-150"
+            >
+              <span>Register</span>
+            </Link>
+
             <Link
               href="/login"
               className="relative inline-flex items-center justify-center gap-2 h-10 px-4 sm:px-5 rounded-[8px] bg-[#38BDF8] text-[#020305] text-[13px] sm:text-[14px] font-semibold border border-[rgba(103,232,249,0.45)] hover:bg-[#67E8F9] hover:shadow-[0_0_24px_rgba(56,189,248,0.22)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38BDF8] transition-all duration-200 active:scale-[0.98]"
@@ -196,13 +203,19 @@ export function Navbar({ onNavigateSection }: NavbarProps) {
             <ArrowRight className="h-4 w-4 text-[#526174]" />
           </button>
 
-          <div className="pt-3">
+          <div className="pt-3 space-y-2">
             <Link
               href="/login"
-              className="w-full flex items-center justify-center gap-2 h-11 rounded-[8px] bg-[#38BDF8] text-[#020305] text-[14px] font-semibold border border-[rgba(103,232,249,0.45)]"
+              className="w-full flex items-center justify-center gap-2 h-11 rounded-[8px] bg-[#38BDF8] text-[#020305] text-[14px] font-semibold border border-[rgba(103,232,249,0.45)] hover:bg-[#67E8F9] transition-colors"
             >
               <span>Sign In to Cadastral Console</span>
               <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link
+              href="/register"
+              className="w-full flex items-center justify-center gap-2 h-11 rounded-[8px] bg-[#0A0F16] text-[#F4F7FB] text-[14px] font-medium border border-[rgba(91,133,167,0.25)] hover:border-[#38BDF8]/40 transition-colors"
+            >
+              <span>Create New Account (Register)</span>
             </Link>
           </div>
         </div>
