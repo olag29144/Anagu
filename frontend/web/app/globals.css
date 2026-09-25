@@ -83,6 +83,19 @@ body {
   background: rgba(56, 189, 248, 0.55);
 }
 
+@keyframes spin360 {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-360 {
+  animation: spin360 25s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
