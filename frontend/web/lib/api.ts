@@ -1,8 +1,8 @@
-import { createClient } from './supabase';
+﻿import { createClient } from './supabase';
 
 /**
  * Typed fetch wrapper that reads the active Supabase session token and
- * forwards it as a Bearer header to the NestJS backend.
+ * forwards it to the NestJS backend as a bearer token.
  *
  * Usage:
  *   const data = await apiCall<Application[]>('/applications');
@@ -15,7 +15,6 @@ export async function apiCall<T>(
   const backendUrl =
     process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
 
-  // Retrieve current session token — may be null for unauthenticated calls
   const supabase = createClient();
   const {
     data: { session },
@@ -27,20 +26,19 @@ export async function apiCall<T>(
   };
 
   if (session?.access_token) {
-    headers['Authorization'] = `Bearer ${session.access_token}`;
+    headers['Authorization'] = 'Bearer ' + session.access_token;
   }
 
-  const response = await fetch(`${backendUrl}${path}`, {
+  const response = await fetch(backendUrl + path, {
     ...options,
     headers,
   });
 
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText);
-    throw new Error(`API ${response.status}: ${text}`);
+    throw new Error('API ' + response.status + ': ' + text);
   }
 
-  // Return parsed JSON; some endpoints return 204 No Content
   if (response.status === 204) {
     return undefined as unknown as T;
   }

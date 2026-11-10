@@ -1,143 +1,227 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { BaselineSimulatorService } from '../baseline/baseline-simulator.service';
+import { BlockchainService } from '../blockchain/blockchain.service';
+import { OracleService } from '../oracle/oracle.service';
+import { SpatialService } from '../spatial/spatial.service';
+import { CoordinateRing } from '../spatial/dto/spatial-verification.dto';
 
 export interface ScenarioResult {
   scenario: number;
   description: string;
   trials: number;
+  proposed: number;
+  baseline: number;
   proposedDetected: number;
   baselineDetected: number;
   proposedRate: string;
   baselineRate: string;
 }
 
-/**
- * FraudScenariosService — runs each of the four adversary fraud scenarios defined
- * in Requirement 10.2, comparing detection rates between the proposed framework
- * and the conventional baseline simulator.
- *
- * Requirements: 10.2, 10.7
- */
+const VALID_DOCUMENTS = {
+  titleDeed: 'title-deed-document',
+  surveyPlan: 'survey-plan-document',
+  identityDocument: 'identity-document',
+};
+
+const REGISTERED_OWNER = 'Ada Okafor';
+const REGISTERED_DOCUMENT = 'DOC-ANAGU-001';
+
 @Injectable()
 export class FraudScenariosService {
-  constructor(private readonly baseline: BaselineSimulatorService) {}
+  constructor(
+    private readonly baseline: BaselineSimulatorService,
+    private readonly spatial: SpatialService,
+    private readonly oracle: OracleService,
+    private readonly blockchain: BlockchainService,
+  ) {}
 
-  /**
-   * Scenario 1: Forged/altered document — titleDeed field is empty (forged/blanked).
-   * Proposed system: oracle document completeness check catches the missing/empty field.
-   * Baseline: document presence check treats empty string as absent → also rejects.
-   *
-   * Requirements: 10.2
-   */
-  runScenario1(n = 20): ScenarioResult {
-    let proposedDetected = 0;
-    let baselineDetected = 0;
+  async runScenario1(n = 20): Promise<ScenarioResult> {
+    this.assertTrials(n);
+    let proposed = 0;
+    let baseline = 0;
 
     for (let i = 0; i < n; i++) {
-      const submission = {
-        applicationId: `scenario1-${i}`,
-        documents: {
-          titleDeed: '',           // forged / blanked
-          surveyPlan: 'valid-survey-plan',
-          identityDocument: 'valid-id-doc',
+      const applicationId = randomUUID();
+      const tamperedDocumentNumber = `TAMPERED-${i}`;
+      const submission = this.createSubmission(applicationId, {
+        titleDeed: `doctored-document-number:${tamperedDocumentNumber}`,
+      });
+      const verification = await this.oracle.verify(
+        {
+          applicationId,
+          parcelRef: `FRAUD-DOCUMENT-${i}`,
+          ownerName: REGISTERED_OWNER,
+          documentNumber: tamperedDocumentNumber,
+          documentType: 'Certificate of Occupancy',
+          issuingAuthority: 'Anagu Land Registry',
         },
-        parcelCoords: [[3.0, 6.0]] as [number, number][],
-        ownerName: 'Test User',
-        documentNumber: 'DOC001',
-      };
+        {
+          activeOwnerName: REGISTERED_OWNER,
+          documentNumber: REGISTERED_DOCUMENT,
+          legalHold: false,
+        },
+        { parcelRef: `FRAUD-DOCUMENT-${i}`, communityAttestations: ['evaluation fixture'] },
+      );
 
-      // Proposed: oracle checks doc completeness → detects missing/empty field
-      proposedDetected++;
+      if (verification.outcome === 'OwnershipConflict') proposed++;
+      if (this.baseline.process(submission) === 'rejected_missing_documents') baseline++;
+    }
 
-      // Baseline: empty string = not present → rejected_missing_documents
-      const baselineResult = this.baseline.process(submission);
-      if (baselineResult === 'rejected_missing_documents') {
-        baselineDetected++;
+    return this.buildResult(1, 'Forged/altered document', n, proposed, baseline);
+  }
+
+  async runScenario2(n = 20): Promise<ScenarioResult> {
+    this.assertTrials(n);
+    const { parcelRing, parcelId } = this.getOverlapFixture();
+    let proposed = 0;
+    let baseline = 0;
+
+    for (let i = 0; i < n; i++) {
+      const applicationId = randomUUID();
+      const result = await this.spatial.verifySpatial({ applicationId, parcelRing });
+      if (result.outcome === 'rejected_overlap') {
+        if (result.conflictingParcelId !== parcelId) {
+          throw new Error(
+            `Expected overlap with seeded parcel ${parcelId}, received ${result.conflictingParcelId ?? 'no parcel ID'}`,
+          );
+        }
+        proposed++;
+      } else {
+        throw new Error(
+          `Overlap fixture ${parcelId} was not detected in trial ${i + 1}: ${result.outcome}`,
+        );
+      }
+
+      if (this.baseline.process(this.createSubmission(applicationId)) === 'rejected_missing_documents') {
+        baseline++;
       }
     }
 
-    return this.buildResult(1, 'Forged/altered document', n, proposedDetected, baselineDetected);
+    return this.buildResult(2, 'Duplicate/overlapping parcel', n, proposed, baseline);
   }
 
-  /**
-   * Scenario 2: Duplicate/overlapping parcel claim.
-   * Proposed system: spatial verifier (ST_Intersects + 0.5 m buffer) detects the overlap.
-   * Baseline: performs no spatial check → never detects overlap.
-   *
-   * Requirements: 10.2
-   */
-  runScenario2(n = 20): ScenarioResult {
-    let proposedDetected = 0;
-    const baselineDetected = 0; // Baseline has no spatial check
+  async runScenario3(n = 20): Promise<ScenarioResult> {
+    this.assertTrials(n);
+    let proposed = 0;
+    let baseline = 0;
 
     for (let i = 0; i < n; i++) {
-      // Proposed: SpatialService.verifySpatial() returns rejected_overlap
-      proposedDetected++;
+      const applicationId = randomUUID();
+      const verification = await this.oracle.verify(
+        {
+          applicationId,
+          parcelRef: `FRAUD-INFORMANT-${i}`,
+          ownerName: `False Claimant ${i}`,
+          documentNumber: REGISTERED_DOCUMENT,
+          documentType: 'Certificate of Occupancy',
+          issuingAuthority: 'Anagu Land Registry',
+        },
+        {
+          activeOwnerName: REGISTERED_OWNER,
+          documentNumber: REGISTERED_DOCUMENT,
+          legalHold: false,
+        },
+        { parcelRef: `FRAUD-INFORMANT-${i}`, communityAttestations: ['evaluation fixture'] },
+      );
+
+      if (verification.outcome === 'OwnershipConflict') proposed++;
+      if (this.baseline.process(this.createSubmission(applicationId)) === 'rejected_missing_documents') {
+        baseline++;
+      }
     }
 
-    return this.buildResult(
-      2,
-      'Duplicate/overlapping parcel',
-      n,
-      proposedDetected,
-      baselineDetected,
-    );
+    return this.buildResult(3, 'Colluding verification informant', n, proposed, baseline);
   }
 
-  /**
-   * Scenario 3: Colluding verification informant — submitted owner name deliberately
-   * mismatches the institutional record (Jaro-Winkler < 0.85).
-   * Proposed system: oracle detects name mismatch → OwnershipConflict.
-   * Baseline: performs no ownership cross-check → never detects conflict.
-   *
-   * Requirements: 10.2
-   */
-  runScenario3(n = 20): ScenarioResult {
-    let proposedDetected = 0;
-    const baselineDetected = 0; // Baseline has no ownership cross-check
+  async runScenario4(n = 20): Promise<ScenarioResult> {
+    this.assertTrials(n);
+    const tokenId = this.getRevokedTokenId();
+    if (!(await this.blockchain.isRevoked(tokenId))) {
+      throw new Error(
+        `Fraud scenario 4 requires an already-revoked token; token ${tokenId} is not revoked`,
+      );
+    }
 
+    let proposed = 0;
+    let baseline = 0;
     for (let i = 0; i < n; i++) {
-      // Proposed: OracleService.verify() returns OwnershipConflict
-      proposedDetected++;
+      if (await this.blockchain.wouldTransferBeRejected(tokenId)) proposed++;
+      if (this.baseline.process(this.createSubmission(`revoked-token-trial-${i}`)) === 'rejected_missing_documents') {
+        baseline++;
+      }
     }
 
-    return this.buildResult(
-      3,
-      'Colluding verification informant',
-      n,
-      proposedDetected,
-      baselineDetected,
-    );
+    return this.buildResult(4, 'Post-revocation NFT reuse', n, proposed, baseline);
   }
 
-  /**
-   * Scenario 4: Post-revocation NFT reuse attempt.
-   * Proposed system: _beforeTokenTransfer hook reverts every transfer on a revoked token.
-   * Baseline: has no blockchain or revocation check → never detects reuse.
-   *
-   * Requirements: 10.2, 10.7
-   */
-  runScenario4(n = 20): ScenarioResult {
-    let proposedDetected = 0;
-    const baselineDetected = 0; // Baseline has no blockchain or revocation check
+  private assertTrials(n: number): void {
+    if (!Number.isInteger(n) || n < 20) {
+      throw new BadRequestException('Fraud scenarios require at least 20 integer trials');
+    }
+  }
 
-    for (let i = 0; i < n; i++) {
-      // Proposed: LandTitleNFT._beforeTokenTransfer reverts the transaction
-      proposedDetected++;
+  private getOverlapFixture(): { parcelRing: CoordinateRing; parcelId: string } {
+    const ringValue = process.env.FRAUD_SCENARIO_OVERLAP_RING;
+    const parcelId = process.env.FRAUD_SCENARIO_OVERLAP_PARCEL_ID;
+    if (!ringValue || !parcelId) {
+      throw new Error(
+        'Scenario 2 requires FRAUD_SCENARIO_OVERLAP_RING and FRAUD_SCENARIO_OVERLAP_PARCEL_ID for a seeded registered parcel',
+      );
     }
 
-    return this.buildResult(
-      4,
-      'Post-revocation NFT reuse',
-      n,
-      proposedDetected,
-      baselineDetected,
-    );
+    let coordinates: unknown;
+    try {
+      coordinates = JSON.parse(ringValue);
+    } catch (error) {
+      throw new Error(
+        `FRAUD_SCENARIO_OVERLAP_RING must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    if (
+      !Array.isArray(coordinates) ||
+      coordinates.length < 3 ||
+      !coordinates.every(
+        (point) =>
+          Array.isArray(point) &&
+          point.length === 2 &&
+          point.every((coordinate) => typeof coordinate === 'number' && Number.isFinite(coordinate)),
+      )
+    ) {
+      throw new Error(
+        'FRAUD_SCENARIO_OVERLAP_RING must be an array of at least three [longitude, latitude] numeric coordinates',
+      );
+    }
+
+    return {
+      parcelRing: { coordinates: coordinates as [number, number][] },
+      parcelId,
+    };
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
+  private getRevokedTokenId(): bigint {
+    const value = process.env.FRAUD_SCENARIO_REVOKED_TOKEN_ID;
+    if (!value || !/^[1-9]\d*$/.test(value)) {
+      throw new Error(
+        'Scenario 4 requires FRAUD_SCENARIO_REVOKED_TOKEN_ID to identify an existing revoked token',
+      );
+    }
+    return BigInt(value);
+  }
+
+  private createSubmission(
+    applicationId: string,
+    documentOverrides: Record<string, string> = {},
+  ) {
+    return {
+      applicationId,
+      documents: { ...VALID_DOCUMENTS, ...documentOverrides },
+      parcelCoords: [],
+      ownerName: 'Test Applicant',
+      documentNumber: 'DOC-TEST',
+    };
+  }
 
   private buildResult(
     scenario: number,
@@ -150,6 +234,8 @@ export class FraudScenariosService {
       scenario,
       description,
       trials,
+      proposed,
+      baseline,
       proposedDetected: proposed,
       baselineDetected: baseline,
       proposedRate: `${proposed}/${trials} (${((proposed / trials) * 100).toFixed(1)}%)`,

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { AuditService } from '../audit/audit.service';
 import { MqttService } from '../mqtt/mqtt.service';
@@ -56,6 +56,14 @@ export class RevocationService {
     governorId: string,
     governorPrivateKey: string,
   ): Promise<void> {
+    if (!/^[1-9]\d*$/.test(tokenId)) {
+      throw new BadRequestException('tokenId must be a positive integer');
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(GROUND_INDEX, ground)) {
+      throw new BadRequestException('Unsupported statutory revocation ground');
+    }
+
     // Step 1 — On-chain revocation
     const groundIndex = GROUND_INDEX[ground];
     const txHash = await this.blockchainService.revokeTitle(

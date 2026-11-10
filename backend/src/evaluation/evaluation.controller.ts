@@ -1,10 +1,12 @@
 import {
   Controller,
   Get,
+  BadRequestException,
   HttpCode,
   HttpStatus,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
@@ -46,7 +48,7 @@ export class EvaluationController {
    */
   @Post('fraud/:scenario')
   @HttpCode(HttpStatus.OK)
-  runFraudScenario(@Param('scenario') scenario: string) {
+  async runFraudScenario(@Param('scenario') scenario: string) {
     const n = 30; // ≥ 20 trials as required by Requirement 10.2
     switch (scenario) {
       case '1':
@@ -58,7 +60,9 @@ export class EvaluationController {
       case '4':
         return this.fraud.runScenario4(n);
       default:
-        return { error: `Unknown scenario: ${scenario}. Valid values: 1–4.` };
+        throw new BadRequestException(
+          `Unknown scenario: ${scenario}. Valid values: 1–4.`,
+        );
     }
   }
 
@@ -80,14 +84,29 @@ export class EvaluationController {
   }
 
   /**
-   * Return the on-chain storage overhead analysis report for 1 000 parcels.
-   * Includes per-field bit lengths, per-record byte total, and percentage reduction
-   * vs the conventional baseline.
+   * Return a storage report for a deployed token and a network projection.
+   * Example: GET /evaluation/storage?tokenId=1&parcels=1000
    *
    * Requirements: 10.4, 10.5
    */
   @Get('storage')
-  getStorage() {
-    return this.storage.getFullReport(1000);
+  getStorage(
+    @Query('tokenId') tokenIdValue: string,
+    @Query('parcels') parcelsValue?: string,
+  ) {
+    if (!/^[1-9]\d*$/.test(tokenIdValue ?? '')) {
+      throw new BadRequestException(
+        'tokenId query parameter must be a positive integer',
+      );
+    }
+
+    const parcels = parcelsValue === undefined ? 1000 : Number(parcelsValue);
+    if (!Number.isInteger(parcels) || parcels <= 0) {
+      throw new BadRequestException(
+        'parcels query parameter must be a positive integer',
+      );
+    }
+
+    return this.storage.getFullReport(BigInt(tokenIdValue), parcels);
   }
 }

@@ -32,20 +32,25 @@ export default function LoginScreen() {
     setLoading(true);
     setErrorMessage(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
-    setLoading(false);
+      if (error) {
+        setErrorMessage(error.message);
+        return;
+      }
 
-    if (error) {
-      setErrorMessage(error.message);
-      return;
+      router.replace('/');
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Unable to sign in. Please try again.',
+      );
+    } finally {
+      setLoading(false);
     }
-
-    // Index screen resolves role and redirects to the correct dashboard
-    router.replace('/');
   }
 
   return (

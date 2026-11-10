@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ConflictException,
   ForbiddenException,
   Get,
   HttpCode,
@@ -98,11 +99,38 @@ export class ApplicationsController {
   @Roles(UserRole.REGISTRAR)
   @HttpCode(HttpStatus.OK)
   async reject(@Param('id') id: string, @Req() req: RequestWithUser) {
-    const { error } = await this.supabase.raw
+    if (typeof (this.pipeline as { rejectApplication?: (id: string, actorId: string, reason?: string) => Promise<void> }).rejectApplication === 'function') {
+      await this.pipeline.rejectApplication(id, req.user.id, 'Rejected by registrar');
+      return { success: true, applicationId: id };
+    }
+
+    const { data, error } = await this.supabase.raw
       .from('applications')
       .update({ status: 'rejected', updated_at: new Date().toISOString() })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('status', 'in_review')
+      .select('id')
+      .maybeSingle();
+
     if (error) throw new Error(`Failed to reject application: ${error.message}`);
+    if (!data) {
+      const { data: application, error: lookupError } = await this.supabase.raw
+        .from('applications')
+        .select('status')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (lookupError) {
+        throw new Error(`Failed to check application status: ${lookupError.message}`);
+      }
+      if (!application) {
+        throw new NotFoundException(`Application ${id} not found`);
+      }
+      throw new ConflictException(
+        `Application ${id} cannot be rejected while it is ${application.status}; expected in_review`,
+      );
+    }
+
     await this.audit.record({
       entityId: id,
       actorId: req.user.id,

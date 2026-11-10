@@ -99,7 +99,7 @@ Each gate must pass its own isolated tests before the next step begins. All appl
     - Return `SpatialVerificationResult` as JSON response with HTTP 200 on approval, 422 on `GEOM_INVALID`, and 409 on `PARCEL_OVERLAP`
     - _Requirements: 2.4, 2.5, 2.6, 7.4_
 
-  - [ ]* 1.5 Write property tests for `SpatialService` (Properties 1, 2, 3)
+  - [x]* 1.5 Write property tests for `SpatialService` (Properties 1, 2, 3)
     - **Property 1: Spatial verification records every outcome in the audit trail**
     - **Validates: Requirements 2.5, 2.6, 2.8**
     - **Property 2: Invalid geometry is always rejected with `GEOM_INVALID`**
@@ -140,7 +140,7 @@ Each gate must pass its own isolated tests before the next step begins. All appl
     - Implement `registryTransfer(tokenId, from, to)` restricted to `REGISTRAR_ROLE`: verify token not revoked, burn old token, mint new token to recipient preserving `parcelRef`, `spatialHash`, `titleMetadata`; emit `RegistryTransfer(newTokenId, from, to, block.timestamp)`
     - _Requirements: 3.4, 3.5_
 
-  - [ ]* 2.3 Write Hardhat property and unit tests for `LandTitleNFT` (Properties 4–8)
+  - [x]* 2.3 Write Hardhat property and unit tests for `LandTitleNFT` (Properties 4–8)
     - **Property 4: NFT minting always produces unique token IDs**
     - **Validates: Requirements 3.1**
     - **Property 5: Every minted NFT contains all five required metadata fields**
@@ -196,14 +196,14 @@ Each gate must pass its own isolated tests before the next step begins. All appl
     - Implement `verify(claim: OwnershipClaim)` applying the four rules in priority order: INCOMPLETE → PENDING → CONFLICT → MATCH; always call `AuditService.record` and `MqttService.publish('land/verification/result', ...)` before returning
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8_
 
-  - [ ]* 3.3 Write property tests for `OracleService` (Properties 9, 10)
+  - [x]* 3.3 Write property tests for `OracleService` (Properties 9, 10)
     - **Property 9: Oracle outcome is deterministic with respect to documented match/conflict rules**
     - **Validates: Requirements 5.2, 5.3, 5.4, 5.5**
     - **Property 10: Oracle always records verification outcome in the audit trail and publishes MQTT**
     - **Validates: Requirements 5.7, 5.8**
     - Use `fast-check` to generate arbitrary `OwnershipClaim` and `InstitutionalRecord` objects; for each generated pair assert the deterministic rule applies and that exactly one audit entry and one MQTT publish are invoked
 
-  - [ ]* 3.4 Write unit tests for `OracleService` covering all four outcomes
+  - [x]* 3.4 Write unit tests for `OracleService` covering all four outcomes
     - Test: missing `ownerName` → `IncompleteDocuments`
     - Test: `legalHold: true` on institutional record → `LegalVerificationPending`
     - Test: Jaro-Winkler < 0.85 → `OwnershipConflict`
@@ -211,14 +211,14 @@ Each gate must pass its own isolated tests before the next step begins. All appl
     - Assert each test that `AuditService.record` and `MqttService.publish` are each called exactly once
     - _Requirements: 5.2, 5.3, 5.4, 5.5, 5.7, 5.8_
 
-  - [ ]* 3.5 Write property tests for `MqttService` (Properties 11, 14)
+  - [x]* 3.5 Write property tests for `MqttService` (Properties 11, 14)
     - **Property 11: Every published MQTT message matches its defined topic schema**
     - **Validates: Requirements 6.1, 6.2**
     - **Property 14: Every MQTT event is logged in the system monitoring table**
     - **Validates: Requirements 6.6**
     - Use `fast-check` to generate arbitrary payloads for each of the four topics; assert QoS matches `MQTT_TOPICS` definition and that `mqtt_events` insert is called with correct `topic` and non-zero `payload_size`
 
-  - [~] 3.6 Implement `RevocationService` and `RevocationModule` in NestJS backend
+  - [x] 3.6 Implement `RevocationService` and `RevocationModule` in NestJS backend
     - Create `backend/src/revocation/revocation.service.ts`
     - Implement `revoke(tokenId, ground, governorId, governorWallet)`:
       1. Call `BlockchainService.revokeTitle()` — on-chain first
@@ -230,21 +230,21 @@ Each gate must pass its own isolated tests before the next step begins. All appl
     - Create stub `NotificationService` with `notifyRevocation` method
     - _Requirements: 4.7, 4.8, 4.9_
 
-  - [~] 3.7 Implement offline queue in the React Native Expo mobile app
+  - [x] 3.7 Implement offline queue in the React Native Expo mobile app
     - Create `frontend/mobile/store/offline-queue.ts` using `react-native-mmkv` for persistence
     - Implement `enqueue(payload)`, `dequeue()`, `remove(id)` functions using `MMKV` storage key `'offline_submissions'`
     - Implement `flushQueue(apiClient, onItemFlushed)` — iterate queue, submit each item, call `remove` on success, increment `retryCount` and mark `failed` after 5 retries
     - Implement `registerConnectivityListener(apiClient)` using `NetInfo.addEventListener` — call `flushQueue` when `state.isConnected && queue.length > 0`
     - _Requirements: 6.4, 6.5, 12.5_
 
-  - [ ]* 3.8 Write property tests for offline queue (Properties 12, 13)
+  - [x]* 3.8 Write property tests for offline queue (Properties 12, 13)
     - **Property 12: Offline queue preserves all submissions made without connectivity**
     - **Validates: Requirements 6.4, 12.5**
     - **Property 13: Offline queue is fully flushed upon connectivity restoration**
     - **Validates: Requirements 6.5**
     - Use `fast-check` to generate arbitrary arrays of payloads; mock MMKV storage; assert that after `enqueue` all items are retrievable by `dequeue`; assert that after `flushQueue` (with mock successful API client) the queue is empty and every item was submitted
 
-- [~] Step 3 Checkpoint — Ensure Oracle and MQTT tests pass before proceeding to Step 4.
+- [x] Step 3 Checkpoint — Ensure Oracle and MQTT tests pass before proceeding to Step 4.
 
 ---
 
@@ -260,12 +260,12 @@ Each gate must pass its own isolated tests before the next step begins. All appl
     - Create `backend/src/auth/audit.interceptor.ts`: intercept every response; on 403, call `AuditService.record` with action `UNAUTHORISED_ACCESS`
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9_
 
-  - [ ]* 4.2 Write property tests for RBAC guard (Property 15)
+  - [x]* 4.2 Write property tests for RBAC guard (Property 15)
     - **Property 15: Role-based access control enforces the RBAC matrix for every operation**
     - **Validates: Requirements 7.3, 7.4, 7.5, 7.6, 7.7, 7.8**
     - Use `fast-check` to generate `(role, operation)` pairs; for each pair assert HTTP 2xx when role is in `RBAC_MATRIX[operation]` and HTTP 403 otherwise, across all five roles and all defined operations
 
-  - [~] 4.3 Implement `RegistrationPipelineService` and orchestrate the end-to-end pipeline
+  - [x] 4.3 Implement `RegistrationPipelineService` and orchestrate the end-to-end pipeline
     - Create `backend/src/pipeline/registration-pipeline.service.ts` with `run(applicationId)` method:
       - Stage 1: call `SpatialService.verifySpatial()`; halt on non-approved result
       - Stage 2: call `OracleService.verify()`; halt on non-SuccessfullyVerified result
@@ -292,7 +292,7 @@ Each gate must pass its own isolated tests before the next step begins. All appl
     - Apply `SupabaseAuthGuard` and `RolesGuard` to all endpoints
     - _Requirements: 7.3, 7.4, 7.5, 7.6, 7.7, 7.9, 9.1, 9.2, 9.3_
 
-  - [ ]* 4.5 Write property and integration tests for the pipeline (Properties 16–20)
+  - [x]* 4.5 Write property and integration tests for the pipeline (Properties 16–20)
     - **Property 16: Every audit trail entry contains all five required fields in correct format**
     - **Validates: Requirements 8.1, 8.3**
     - **Property 17: Audit trail entries are immutable — no update or delete ever succeeds**
@@ -357,7 +357,7 @@ Each gate must pass its own isolated tests before the next step begins. All appl
     - Implement `computeReductionPercentage(proposed: number, baseline: number)` — return `((baseline - proposed) / baseline) * 100`
     - _Requirements: 10.4, 10.5_
 
-  - [ ]* 5.5 Write unit tests for evaluation services
+  - [x]* 5.5 Write unit tests for evaluation services
     - Test `BaselineSimulatorService.process()`: all three docs present → `accepted`; one doc missing → `rejected_missing_documents`
     - Test `StorageAnalysisService.computeReductionPercentage()`: assert result is between 0 and 100 and matches formula
     - Test `LatencyInstrumentationService.runLatencyBenchmark()`: assert mock returns mean and SD for each of the five stage keys

@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
+import { router } from 'expo-router';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  ActivityIndicator, StyleSheet, Alert,
+  ActivityIndicator, StyleSheet,
 } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { enqueue } from '../../store/offline-queue';
-import { supabase } from '../../lib/supabase';
-
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
+import { submitApplication } from '../../lib/applications-api';
 
 export default function SubmitScreen() {
   const [form, setForm] = useState({
@@ -49,24 +48,8 @@ export default function SubmitScreen() {
         return;
       }
 
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token ?? '';
-
-      const res = await fetch(`${BACKEND_URL}/applications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const body = await res.text();
-        setErrorMsg(`Submission failed: ${body}`);
-        setStatus('error');
-        return;
-      }
-
-      const json = await res.json() as { id: string };
-      setResultId(json.id);
+      const result = await submitApplication(payload);
+      setResultId(result.id);
       setStatus('submitted');
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Unknown error');
@@ -109,6 +92,13 @@ export default function SubmitScreen() {
           <Text style={styles.btnText}>Submit Application</Text>
         </TouchableOpacity>
       )}
+      <TouchableOpacity
+        accessibilityRole="button"
+        style={styles.statusLink}
+        onPress={() => router.push('/(citizen)/status')}
+      >
+        <Text style={styles.statusLinkText}>View my applications and offline submissions</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -122,6 +112,8 @@ const styles = StyleSheet.create({
   multiline: { minHeight: 80, textAlignVertical: 'top' },
   btn: { backgroundColor: '#2563EB', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 20 },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  statusLink: { alignItems: 'center', paddingVertical: 16 },
+  statusLinkText: { color: '#15803d', fontSize: 14, fontWeight: '600' },
   success: { color: '#16A34A', fontSize: 14, marginVertical: 8 },
   queued: { color: '#D97706', fontSize: 14, marginVertical: 8 },
   error: { color: '#DC2626', fontSize: 14, marginVertical: 8 },

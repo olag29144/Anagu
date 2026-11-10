@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 import { BaselineModule } from '../baseline/baseline.module';
 import { AuthModule } from '../auth/auth.module';
 import { AuditModule } from '../audit/audit.module';
+import { BlockchainModule } from '../blockchain/blockchain.module';
+import { OracleModule } from '../oracle/oracle.module';
+import { SpatialModule } from '../spatial/spatial.module';
 import { FraudScenariosService } from './fraud-scenarios.service';
 import { LatencyInstrumentationService } from './latency-instrumentation.service';
 import { StorageAnalysisService } from './storage-analysis.service';
@@ -16,7 +19,14 @@ import { EvaluationController } from './evaluation.controller';
  * Requirements: 10.1–10.7
  */
 @Module({
-  imports: [BaselineModule, AuthModule, AuditModule],
+  imports: [
+    BaselineModule,
+    AuthModule,
+    AuditModule,
+    BlockchainModule,
+    OracleModule,
+    SpatialModule,
+  ],
   providers: [FraudScenariosService, LatencyInstrumentationService, StorageAnalysisService],
   controllers: [EvaluationController],
 })

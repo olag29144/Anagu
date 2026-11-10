@@ -84,6 +84,7 @@ export class LatencyInstrumentationService {
    * Requirement 10.3 mandates at least 30 runs.
    */
   async runLatencyBenchmark(n = 30): Promise<LatencyBenchmarkResult> {
+    this.assertRunCount(n);
     const timings: StageTiming[] = [];
     for (let i = 0; i < n; i++) {
       timings.push(await this.timedRegistration());
@@ -107,6 +108,7 @@ export class LatencyInstrumentationService {
    * process: only a document-presence check with no async I/O.
    */
   runBaselineBenchmark(n = 30): LatencyBenchmarkResult {
+    this.assertRunCount(n);
     const times: number[] = [];
 
     for (let i = 0; i < n; i++) {
@@ -134,6 +136,12 @@ export class LatencyInstrumentationService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private assertRunCount(n: number): void {
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error('Benchmark run count must be a positive integer');
+    }
+  }
 
   /**
    * Simulates a pipeline stage with a given approximate duration (ms) plus

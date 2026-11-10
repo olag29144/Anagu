@@ -16,5 +16,21 @@
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/edr-win32-x64-msvc": "^0.12.0-next.23",
+    "@nomicfoundation/hardhat-ethers": "^3.1.3",
+    "@nomicfoundation/hardhat-ignition-ethers": "^0.15.17",
+    "lodash": "^4.17.21",
+    "node-emoji": "^2.1.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.7.3"
+  },
+  "overrides": {
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   }
 }

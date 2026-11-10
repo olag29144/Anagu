@@ -442,6 +442,8 @@ Six-case test suite passes with mock inputs (see Section 13 for result tables).
 
 - Build this as an intermediary **NestJS service**.
 - **Document precisely what counts as a "match" versus a "conflict"** in your comparison logic. This rule is what later gets stress-tested in Component 4's fraud scenarios. Vague matching criteria now becomes an untestable claim later.
+- An institutional source outage is not an ownership conflict: audit it as `SOURCE_UNAVAILABLE`, publish `SourceUnavailable` on `land/verification/result`, and surface the source error so the application is not falsely classified.
+- A claim requires at least one non-empty community attestation for the same parcel before institutional ownership matching can approve it. Missing attestations are classified as `IncompleteDocuments`; the authoritative backend reads attestations from the service-role-only `community_attestations` table.
 
 **How to test (isolated — GIS and blockchain both mocked out):**
 
@@ -844,8 +846,8 @@ Use this checklist to track progress to 100%.
 - [ ] Normal connectivity delivery test — table filled
 - [ ] Moderate degradation test (200ms / 10% loss) — table filled
 - [ ] Severe degradation test (500ms / 25% loss) — table filled
-- [ ] Offline queue implemented (local buffer that flushes on reconnect)
-- [ ] Offline queue test completed — all 3 scenarios recorded
+- [x] Offline queue implemented (in-memory FIFO that flushes on reconnect)
+- [x] Offline queue behavior test completed (buffering and ordered reconnect delivery)
 
 ### Integration
 - [ ] All 3 components individually pass isolated tests

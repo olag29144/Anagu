@@ -7,6 +7,9 @@ import NetInfo from '@react-native-community/netinfo';
 
 const storage = new MMKV({ id: 'anagu-offline-queue' });
 const QUEUE_KEY = 'offline_submissions';
+let idSequence = 0;
+let flushInProgress = false;
+const queueListeners = new Set<() => void>();
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,12 +24,13 @@ export interface QueuedSubmission {
 }
 
 /**
- * Minimal API client contract required by the offline queue.
- * The full `AnaguApiClient` is implemented in the networking layer;
- * this interface keeps the queue free of circular dependencies.
+ * Minimal API client contract required by the offline queue. Keeping this
+ * interface here avoids coupling queue storage to the HTTP implementation.
  */
 export interface SubmissionApiClient {
-  submitApplication(payload: Record<string, unknown>): Promise<void>;
+  submitApplication(
+    payload: Record<string, unknown>,
+  ): Promise<void | { id: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,7 +43,7 @@ export interface SubmissionApiClient {
 export function enqueue(payload: Record<string, unknown>): void {
   const current = readQueue();
   const entry: QueuedSubmission = {
-    id: crypto.randomUUID(),
+    id: createId(),
     payload,
     queuedAt: new Date().toISOString(),
     retryCount: 0,
@@ -55,12 +59,34 @@ export function dequeue(): QueuedSubmission[] {
   return readQueue();
 }
 
+export function subscribeToQueue(listener: () => void): () => void {
+  queueListeners.add(listener);
+  return () => queueListeners.delete(listener);
+}
+
 /**
  * Remove a single item by id.
  */
 export function remove(id: string): void {
   const updated = readQueue().filter((item) => item.id !== id);
   writeQueue(updated);
+}
+
+/**
+ * Re-enable a failed submission for a user-requested retry.
+ * Returns false when the item no longer exists or is not failed.
+ */
+export function retryFailedSubmission(id: string): boolean {
+  const queue = readQueue();
+  const item = queue.find((entry) => entry.id === id);
+  if (!item || item.status !== 'failed') {
+    return false;
+  }
+
+  item.retryCount = 0;
+  item.status = 'pending';
+  writeQueue(queue);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,31 +111,34 @@ export async function flushQueue(
   apiClient: SubmissionApiClient,
   onItemFlushed: (id: string) => void,
 ): Promise<void> {
+  if (flushInProgress) return;
+
   const queue = readQueue();
   if (queue.length === 0) return;
 
-  const updated: QueuedSubmission[] = [];
+  flushInProgress = true;
+  try {
+    for (const item of queue) {
+      if (item.status === 'failed') {
+        continue;
+      }
 
-  for (const item of queue) {
-    if (item.status === 'failed') {
-      // Already exhausted retries — keep in queue so user can inspect / retry
-      updated.push(item);
-      continue;
-    }
+      try {
+        await apiClient.submitApplication(item.payload);
+      } catch {
+        const newRetryCount = item.retryCount + 1;
+        const newStatus: QueuedSubmission['status'] =
+          newRetryCount >= MAX_RETRIES ? 'failed' : 'pending';
+        updateItem({ ...item, retryCount: newRetryCount, status: newStatus });
+        continue;
+      }
 
-    try {
-      await apiClient.submitApplication(item.payload);
-      // Success — do not add back to the updated list (effectively removes it)
+      remove(item.id);
       onItemFlushed(item.id);
-    } catch {
-      const newRetryCount = item.retryCount + 1;
-      const newStatus: QueuedSubmission['status'] =
-        newRetryCount >= MAX_RETRIES ? 'failed' : 'pending';
-      updated.push({ ...item, retryCount: newRetryCount, status: newStatus });
     }
+  } finally {
+    flushInProgress = false;
   }
-
-  writeQueue(updated);
 }
 
 // ---------------------------------------------------------------------------
@@ -131,10 +160,9 @@ export function registerConnectivityListener(
     const hasPending = readQueue().some((item) => item.status !== 'failed');
 
     if (isConnected && hasPending) {
-      // Fire-and-forget — errors are handled inside flushQueue
+      // Fire-and-forget; report storage/callback failures that are not retries.
       flushQueue(apiClient, () => {}).catch(() => {
-        // Network was reported connected but the flush still failed; the items
-        // will remain in the queue and retry on the next connectivity event.
+        console.error('Failed to flush offline submissions');
       });
     }
   });
@@ -149,14 +177,43 @@ export function registerConnectivityListener(
 function readQueue(): QueuedSubmission[] {
   const raw = storage.getString(QUEUE_KEY);
   if (!raw) return [];
-  try {
-    return JSON.parse(raw) as QueuedSubmission[];
-  } catch {
-    // Corrupted storage — return empty and let a fresh write fix it
-    return [];
+  const parsed: unknown = JSON.parse(raw);
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every(
+      (item) =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof item.id === 'string' &&
+        typeof item.payload === 'object' &&
+        item.payload !== null &&
+        typeof item.queuedAt === 'string' &&
+        Number.isInteger(item.retryCount) &&
+        item.retryCount >= 0 &&
+        (item.status === undefined ||
+          item.status === 'pending' ||
+          item.status === 'failed'),
+    )
+  ) {
+    throw new Error('Offline submission queue contains invalid stored data');
   }
+  return parsed as QueuedSubmission[];
 }
 
 function writeQueue(items: QueuedSubmission[]): void {
   storage.set(QUEUE_KEY, JSON.stringify(items));
+  queueListeners.forEach((listener) => listener());
+}
+
+function updateItem(updatedItem: QueuedSubmission): void {
+  const queue = readQueue();
+  const index = queue.findIndex((item) => item.id === updatedItem.id);
+  if (index === -1) return;
+  queue[index] = updatedItem;
+  writeQueue(queue);
+}
+
+function createId(): string {
+  idSequence += 1;
+  return `submission-${Date.now()}-${idSequence}-${Math.random().toString(36).slice(2)}`;
 }

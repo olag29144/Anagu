@@ -1,20 +1,24 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import * as fc from 'fast-check';
 import { OracleService } from './oracle.service';
 import { AuditService } from '../audit/audit.service';
 import { MqttService } from '../mqtt/mqtt.service';
 import { OwnershipClaim } from './oracle.types';
+import { InstitutionalSourceClient } from './institutional-source.client';
+import { CommunitySourceClient } from './community-source.client';
 
 /**
  * OracleService tests.
  *
- * OracleService uses a private `fetchInstitutionalRecord()` method to retrieve
- * parcel data (no injected clients). We spy on that method to control results
- * for each scenario without touching real network/database resources.
+ * Source clients are mocked so each scenario is deterministic and does not
+ * touch real database resources.
  */
 describe('OracleService', () => {
   let service: OracleService;
   let auditMock: { record: jest.Mock };
   let mqttMock: { publish: jest.Mock };
+  let institutionalMock: { fetchRecord: jest.Mock };
+  let communityMock: { fetchRecord: jest.Mock };
 
   const baseClaim: OwnershipClaim = {
     applicationId: 'app-001',
@@ -24,23 +28,150 @@ describe('OracleService', () => {
     documentType: 'Certificate of Occupancy',
     issuingAuthority: 'FCT Land Registry',
   };
+  const nonBlankString = fc
+    .string({ minLength: 1, maxLength: 32 })
+    .filter((value) => value.trim().length > 0);
+  const validClaimArbitrary = fc.record({
+    applicationId: fc.uuid(),
+    parcelRef: nonBlankString,
+    ownerName: nonBlankString,
+    documentNumber: nonBlankString,
+    documentType: nonBlankString,
+    issuingAuthority: nonBlankString,
+  });
 
   beforeEach(async () => {
     auditMock = { record: jest.fn().mockResolvedValue(undefined) };
     mqttMock = { publish: jest.fn().mockResolvedValue(undefined) };
+    institutionalMock = {
+      fetchRecord: jest.fn().mockResolvedValue(null),
+    };
+    communityMock = {
+      fetchRecord: jest
+        .fn()
+        .mockImplementation(async (parcelRef: string) => ({
+          parcelRef,
+          communityAttestations: ['verified community attestation'],
+        })),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OracleService,
         { provide: AuditService, useValue: auditMock },
         { provide: MqttService, useValue: mqttMock },
+        { provide: InstitutionalSourceClient, useValue: institutionalMock },
+        { provide: CommunitySourceClient, useValue: communityMock },
       ],
     }).compile();
 
     service = module.get<OracleService>(OracleService);
   });
 
-  // Helper to spy on the private institutional fetch
+  it('uses the institutional source record when verifying ownership', async () => {
+    institutionalMock.fetchRecord.mockResolvedValue({
+      parcelRef: baseClaim.parcelRef,
+      activeOwnerName: 'Different Person',
+      documentNumber: 'OTHER-DOCUMENT',
+      legalHold: false,
+    });
+
+    const result = await service.verify(baseClaim);
+
+    expect(institutionalMock.fetchRecord).toHaveBeenCalledWith(baseClaim.parcelRef);
+    expect(result.outcome).toBe('OwnershipConflict');
+    expect(result.reason).toBe('Document number mismatch');
+  });
+
+  it('requires at least one non-empty community attestation before verification', async () => {
+    communityMock.fetchRecord.mockResolvedValue({
+      parcelRef: baseClaim.parcelRef,
+      communityAttestations: [' ', ''],
+    });
+
+    const result = await service.verify(baseClaim);
+
+    expect(result).toEqual({
+      outcome: 'IncompleteDocuments',
+      reason: 'At least one community attestation is required',
+    });
+    expect(institutionalMock.fetchRecord).not.toHaveBeenCalled();
+    expect(auditMock.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'IncompleteDocuments',
+      }),
+    );
+    expect(mqttMock.publish).toHaveBeenCalledWith(
+      'land/verification/result',
+      expect.objectContaining({ outcome: 'IncompleteDocuments' }),
+      1,
+    );
+  });
+
+  it('does not accept an attestation from a different parcel', async () => {
+    communityMock.fetchRecord.mockResolvedValue({
+      parcelRef: 'ANOTHER/PARCEL',
+      communityAttestations: ['attestation for another parcel'],
+    });
+
+    const result = await service.verify(baseClaim);
+
+    expect(result).toEqual({
+      outcome: 'IncompleteDocuments',
+      reason: 'Community attestation does not match the claimed parcel',
+    });
+    expect(institutionalMock.fetchRecord).not.toHaveBeenCalled();
+  });
+
+  it('records and surfaces community source failures', async () => {
+    communityMock.fetchRecord.mockRejectedValue(new Error('community source offline'));
+
+    await expect(service.verify(baseClaim)).rejects.toThrow(
+      'Community ownership verification failed: community source offline',
+    );
+    expect(auditMock.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'SOURCE_UNAVAILABLE',
+        metadata: expect.objectContaining({ source: 'community' }),
+      }),
+    );
+    expect(mqttMock.publish).toHaveBeenCalledWith(
+      'land/verification/result',
+      expect.objectContaining({ outcome: 'SourceUnavailable' }),
+      1,
+    );
+  });
+
+  it('audits and publishes institutional source failures before surfacing them', async () => {
+    institutionalMock.fetchRecord.mockRejectedValue(
+      new Error('registry connection timed out'),
+    );
+
+    await expect(service.verify(baseClaim)).rejects.toThrow(
+      'Institutional ownership verification failed: registry connection timed out',
+    );
+    expect(auditMock.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: baseClaim.applicationId,
+        action: 'ORACLE_VERIFICATION',
+        outcome: 'SOURCE_UNAVAILABLE',
+        metadata: expect.objectContaining({
+          source: 'institutional',
+          reason: 'registry connection timed out',
+        }),
+      }),
+    );
+    expect(mqttMock.publish).toHaveBeenCalledWith(
+      'land/verification/result',
+      expect.objectContaining({
+        applicationId: baseClaim.applicationId,
+        outcome: 'SourceUnavailable',
+      }),
+      1,
+    );
+  });
+
+  // Helper to control institutional results without a real data source.
   function mockInstitutional(
     record: {
       ownerName?: string;
@@ -96,6 +227,17 @@ describe('OracleService', () => {
       const spy = jest.spyOn(service as any, 'fetchInstitutionalRecord');
       await service.verify({ ...baseClaim, ownerName: '' });
       expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('returns IncompleteDocuments when a required field is undefined', async () => {
+      const claim = {
+        ...baseClaim,
+        ownerName: undefined,
+      } as unknown as OwnershipClaim;
+
+      const result = await service.verify(claim);
+
+      expect(result.outcome).toBe('IncompleteDocuments');
     });
   });
 
@@ -248,6 +390,15 @@ describe('OracleService', () => {
       const result = await service.verify(baseClaim);
       expect((result.score ?? 1)).toBeLessThan(0.85);
     });
+
+    it('returns OwnershipConflict when the institutional fetch returns null', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      jest.spyOn(service as any, 'fetchInstitutionalRecord').mockResolvedValue(null);
+
+      const result = await service.verify(baseClaim);
+
+      expect(result.outcome).toBe('OwnershipConflict');
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -276,6 +427,101 @@ describe('OracleService', () => {
       await service.verify(baseClaim);
       expect(auditMock.record).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'ORACLE_VERIFICATION' }),
+      );
+    });
+  });
+
+  describe('property invariants', () => {
+    it('matches claims when owner names and document numbers match', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const institutionalSpy = jest.spyOn(service as any, 'fetchInstitutionalRecord');
+
+      await fc.assert(
+        fc.asyncProperty(validClaimArbitrary, async (claim) => {
+          institutionalSpy.mockResolvedValue({
+            ownerName: claim.ownerName,
+            documentNumber: claim.documentNumber,
+            legalHold: false,
+          });
+          auditMock.record.mockClear();
+          mqttMock.publish.mockClear();
+
+          const result = await service.verify(claim);
+
+          expect(result.outcome).toBe('SuccessfullyVerified');
+          expect(auditMock.record).toHaveBeenCalledTimes(1);
+          expect(mqttMock.publish).toHaveBeenCalledTimes(1);
+        }),
+        { numRuns: 25 },
+      );
+    });
+
+    it('returns pending for every claim when the institutional record has a legal hold', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const institutionalSpy = jest.spyOn(service as any, 'fetchInstitutionalRecord');
+
+      await fc.assert(
+        fc.asyncProperty(validClaimArbitrary, async (claim) => {
+          institutionalSpy.mockResolvedValue({
+            ownerName: claim.ownerName,
+            documentNumber: claim.documentNumber,
+            legalHold: true,
+          });
+          auditMock.record.mockClear();
+          mqttMock.publish.mockClear();
+
+          const result = await service.verify(claim);
+
+          expect(result.outcome).toBe('LegalVerificationPending');
+          expect(auditMock.record).toHaveBeenCalledTimes(1);
+          expect(mqttMock.publish).toHaveBeenCalledTimes(1);
+        }),
+        { numRuns: 25 },
+      );
+    });
+
+    it('returns conflict for every exact-name claim with a different document number', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const institutionalSpy = jest.spyOn(service as any, 'fetchInstitutionalRecord');
+
+      await fc.assert(
+        fc.asyncProperty(validClaimArbitrary, async (claim) => {
+          institutionalSpy.mockResolvedValue({
+            ownerName: claim.ownerName,
+            documentNumber: `${claim.documentNumber}-different`,
+            legalHold: false,
+          });
+          auditMock.record.mockClear();
+          mqttMock.publish.mockClear();
+
+          const result = await service.verify(claim);
+
+          expect(result.outcome).toBe('OwnershipConflict');
+          expect(auditMock.record).toHaveBeenCalledTimes(1);
+          expect(mqttMock.publish).toHaveBeenCalledTimes(1);
+        }),
+        { numRuns: 25 },
+      );
+    });
+
+    it('does not fetch an institutional record for incomplete claims', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const institutionalSpy = jest.spyOn(service as any, 'fetchInstitutionalRecord');
+
+      await fc.assert(
+        fc.asyncProperty(validClaimArbitrary, async (claim) => {
+          institutionalSpy.mockClear();
+          auditMock.record.mockClear();
+          mqttMock.publish.mockClear();
+
+          const result = await service.verify({ ...claim, ownerName: '  ' });
+
+          expect(result.outcome).toBe('IncompleteDocuments');
+          expect(institutionalSpy).not.toHaveBeenCalled();
+          expect(auditMock.record).toHaveBeenCalledTimes(1);
+          expect(mqttMock.publish).toHaveBeenCalledTimes(1);
+        }),
+        { numRuns: 25 },
       );
     });
   });

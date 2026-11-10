@@ -51,6 +51,30 @@ export class SpatialService {
    */
   async verifySpatial(dto: SpatialVerificationDto): Promise<SpatialVerificationResult> {
     const checkedAt = new Date().toISOString();
+    const coords: unknown = dto?.parcelRing?.coordinates;
+    const invalidReason = this.getInvalidRingReason(coords);
+
+    if (invalidReason) {
+      const result: SpatialVerificationResult = {
+        outcome: 'rejected_invalid_geometry',
+        diagnosticCode: 'GEOM_INVALID',
+        bufferMetres: 0.5,
+        checkedAt,
+      };
+
+      await this.auditService.record({
+        entityId: dto.applicationId,
+        action: 'SPATIAL_VERIFICATION',
+        outcome: 'REJECTED_INVALID_GEOMETRY',
+        metadata: {
+          reason: invalidReason,
+          wkt: 'SRID=4326;POLYGON(())',
+        },
+      });
+
+      return result;
+    }
+
     const wkt = this.ringToWKT(dto.parcelRing);
 
     // ------------------------------------------------------------------
@@ -151,6 +175,70 @@ export class SpatialService {
     return result;
   }
 
+  async persistVerifiedParcel(
+    applicationId: string,
+    parcelRing: CoordinateRing,
+  ): Promise<string> {
+    const { data, error } = await this.supabase.rpc('persist_verified_parcel', {
+      p_application_id: applicationId,
+      p_wkt: this.ringToWKT(parcelRing),
+    });
+
+    if (error) {
+      this.logger.error(
+        `persist_verified_parcel RPC error for application ${applicationId}: ${error.message}`,
+      );
+      throw new Error(`Failed to persist verified parcel: ${error.message}`);
+    }
+
+    if (typeof data !== 'string' || data.length === 0) {
+      throw new Error(
+        `Failed to persist verified parcel for application ${applicationId}: RPC returned no parcel ID`,
+      );
+    }
+
+    return data;
+  }
+
+  private getInvalidRingReason(coordinates: unknown): string | undefined {
+    if (!Array.isArray(coordinates) || coordinates.length < 3) {
+      return 'polygon requires at least 3 coordinates';
+    }
+
+    const distinctVertices = new Set<string>();
+    for (const candidate of coordinates) {
+      if (
+        !Array.isArray(candidate) ||
+        candidate.length !== 2
+      ) {
+        return 'each coordinate must contain exactly a longitude and latitude';
+      }
+
+      const longitude: unknown = candidate[0];
+      const latitude: unknown = candidate[1];
+      if (
+        typeof longitude !== 'number' ||
+        typeof latitude !== 'number' ||
+        !Number.isFinite(longitude) ||
+        !Number.isFinite(latitude)
+      ) {
+        return 'each coordinate must contain a finite longitude and latitude';
+      }
+
+      if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) {
+        return 'coordinates must be within WGS 84 longitude and latitude ranges';
+      }
+
+      distinctVertices.add(`${longitude},${latitude}`);
+    }
+
+    if (distinctVertices.size < 3) {
+      return 'polygon requires at least 3 distinct vertices';
+    }
+
+    return undefined;
+  }
+
   /**
    * Convert a `CoordinateRing` to an EWKT POLYGON string.
    *
@@ -161,12 +249,15 @@ export class SpatialService {
    * ringToWKT({ coordinates: [[3.0, 6.0], [4.0, 6.0], [4.0, 7.0], [3.0, 7.0]] })
    * // → "SRID=4326;POLYGON((3 6, 4 6, 4 7, 3 7, 3 6))"
    */
-  private ringToWKT(ring: CoordinateRing): string {
-    const coords = ring.coordinates;
+  ringToWKT(ring: CoordinateRing): string {
+    const coords = ring?.coordinates ?? [];
+
+    if (coords.length === 0) {
+      return 'SRID=4326;POLYGON(())';
+    }
 
     // Close the ring if needed (first point !== last point)
     const closed =
-      coords.length > 0 &&
       coords[0][0] === coords[coords.length - 1][0] &&
       coords[0][1] === coords[coords.length - 1][1]
         ? coords

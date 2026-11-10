@@ -3,6 +3,7 @@
  *
  * Supported statuses:
  *   pending     → gray
+ *   legal_pending → orange
  *   in_review   → yellow/amber
  *   approved    → blue
  *   completed   → green
@@ -13,6 +14,7 @@
 
 export type ApplicationStatus =
   | 'pending'
+  | 'legal_pending'
   | 'in_review'
   | 'approved'
   | 'completed'
@@ -27,6 +29,7 @@ interface StatusBadgeProps {
 
 const STATUS_STYLES: Record<string, string> = {
   pending:   'bg-gray-100 text-gray-700 ring-gray-200',
+  legal_pending: 'bg-orange-100 text-orange-800 ring-orange-200',
   in_review: 'bg-amber-100 text-amber-700 ring-amber-200',
   approved:  'bg-blue-100 text-blue-700 ring-blue-200',
   completed: 'bg-green-100 text-green-700 ring-green-200',
@@ -37,6 +40,7 @@ const STATUS_STYLES: Record<string, string> = {
 
 const STATUS_LABELS: Record<string, string> = {
   pending:   'Pending',
+  legal_pending: 'Legal Review',
   in_review: 'In Review',
   approved:  'Approved',
   completed: 'Completed',

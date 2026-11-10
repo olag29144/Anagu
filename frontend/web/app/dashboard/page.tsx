@@ -26,16 +26,25 @@ export default function DashboardPage() {
         return;
       }
 
-      // Look up role from user_roles table
-      const { data: roleRow } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', session.user.id)
-        .maybeSingle();
+      const appMetadata = session.user.app_metadata as Record<string, unknown> | undefined;
+      const userMetadata = session.user.user_metadata as Record<string, unknown> | undefined;
+      const roleFromMetadata =
+        (appMetadata?.role as string | undefined) ??
+        (appMetadata?.user_role as string | undefined) ??
+        (userMetadata?.role as string | undefined) ??
+        (userMetadata?.user_role as string | undefined);
 
-      const role =
-        (roleRow as { role?: string } | null)?.role ||
-        (session.user.user_metadata?.role as string | undefined);
+      let role = roleFromMetadata?.toLowerCase();
+
+      if (!role) {
+        const { data: roleRow } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', session.user.id)
+          .maybeSingle();
+
+        role = ((roleRow as { role?: string } | null)?.role ?? '').toLowerCase();
+      }
 
       switch (role) {
         case 'citizen':

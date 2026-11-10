@@ -86,6 +86,18 @@ describe('BaselineSimulatorService', () => {
     expect(result).toBe('rejected_missing_documents');
   });
 
+  it('rejects when the documents object is missing', () => {
+    const result = service.process({
+      applicationId: 'app-009',
+      documents: undefined as unknown as Record<string, string | null | undefined>,
+      parcelCoords: [],
+      ownerName: 'Test User',
+      documentNumber: 'DOC001',
+    });
+
+    expect(result).toBe('rejected_missing_documents');
+  });
+
   it('rejects when surveyPlan is undefined', () => {
     const result = service.process({
       applicationId: 'app-008',

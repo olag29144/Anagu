@@ -21,11 +21,13 @@ export class BaselineSimulatorService {
   readonly REQUIRED_DOCS = ['titleDeed', 'surveyPlan', 'identityDocument'] as const;
 
   process(submission: BaselineSubmission): BaselineOutcome {
-    const allPresent = this.REQUIRED_DOCS.every(
-      (doc) =>
-        typeof submission.documents[doc] === 'string' &&
-        (submission.documents[doc] as string).trim().length > 0,
-    );
+    const documents = submission.documents ?? {};
+
+    const allPresent = this.REQUIRED_DOCS.every((doc) => {
+      const value = documents[doc];
+      return typeof value === 'string' && value.trim().length > 0;
+    });
+
     return allPresent ? 'accepted' : 'rejected_missing_documents';
   }
 }

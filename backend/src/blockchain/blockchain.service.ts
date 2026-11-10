@@ -183,6 +183,65 @@ export class BlockchainService implements OnModuleInit {
     return this.landTitleNFT.isRevoked(tokenId) as Promise<boolean>;
   }
 
+  async getTitleMetadata(tokenId: bigint): Promise<{
+    parcelRef: string;
+    mintTxHash: string;
+    spatialHash: string;
+    titleMetadata: string;
+  }> {
+    this.assertContractReady();
+    const metadata = (await this.landTitleNFT
+      .getFunction('getMetadata')
+      .staticCall(tokenId)) as {
+      parcelRef: string;
+      mintTxHash: string;
+      spatialHash: string;
+      titleMetadata: string;
+    };
+
+    return {
+      parcelRef: metadata.parcelRef,
+      mintTxHash: metadata.mintTxHash,
+      spatialHash: metadata.spatialHash,
+      titleMetadata: metadata.titleMetadata,
+    };
+  }
+
+  async ownerOf(tokenId: bigint): Promise<string> {
+    this.assertContractReady();
+    return (await this.landTitleNFT.getFunction('ownerOf').staticCall(
+      tokenId,
+    )) as string;
+  }
+
+  /**
+   * Execute a read-only transfer attempt as the token owner and report whether
+   * the contract rejected it for its transfer lock.
+   */
+  async wouldTransferBeRejected(tokenId: bigint): Promise<boolean> {
+    this.assertContractReady();
+    const owner = await this.ownerOf(tokenId);
+
+    try {
+      await this.landTitleNFT
+        .getFunction('transferFrom')
+        .staticCall(owner, '0x000000000000000000000000000000000000dead', tokenId, {
+          from: owner,
+        });
+      return false;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.toLowerCase().includes('direct transfers are disabled') ||
+        message.toLowerCase().includes('token is revoked')
+      ) {
+        return true;
+      }
+
+      throw new Error(`Transfer simulation failed for token ${tokenId}: ${message}`);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------

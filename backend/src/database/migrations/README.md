@@ -24,12 +24,13 @@ duplicate objects.
 
 | File | Depends on | Creates |
 |------|-----------|---------|
-| `../spatial/migrations/001_spatial_schema.sql` | — (run **first**) | `parcels` table, PostGIS extension, `check_geometry_valid` and `check_parcel_overlap` RPC functions |
-| `002_audit_trail.sql` | — | `audit_trail` table with RLS policies |
+| `../spatial/migrations/001_spatial_schema.sql` | — (run **first**) | `parcels` table, PostGIS extension, geometry validation/overlap RPCs, and verified-parcel persistence |
+| `002_audit_trail.sql` | — | `audit_trail` table with RLS policies and an append-only mutation trigger |
 | `003_applications.sql` | **001** | `applications` table (incl. `parcel_ring JSONB`); adds FK from `parcels.application_id` |
 | `004_land_titles.sql` | 001, 003 | `land_titles` table |
 | `005_mqtt_events.sql` | — | `mqtt_events` monitoring table |
 | `006_user_roles.sql` | — | `user_roles` table |
+| `007_community_attestations.sql` | — | Service-role-only community ownership attestations |
 
 > **Important:** `001_spatial_schema.sql` must be applied before `003_applications.sql`.
 > Migration 003 adds a foreign key constraint from `parcels.application_id` to
@@ -39,6 +40,8 @@ duplicate objects.
 
 - `applications.parcel_ring` (`JSONB`) — stores the raw GeoJSON ring coordinates for the
   parcel boundary, as consumed by `registration-pipeline.service.ts`.
+- `community_attestations` — one non-empty attestation per row, matched by `parcel_ref`.
+  The backend's service-role client reads these records; RLS has no end-user policies.
 
 ## Applying migrations via the Supabase SQL editor
 
@@ -74,6 +77,10 @@ required variables.
 
 ## Row-Level Security (RLS)
 
+The `user_roles` table allows authenticated users to read only their own role. Role
+assignment and changes must be performed by a trusted backend using the `service_role`
+key; client-side inserts and updates are not permitted.
+
 The `audit_trail` table has RLS enabled with the following policies:
 - `INSERT` — allowed for the `service_role` key only (used by the NestJS backend).
 - `UPDATE` — denied for all roles (audit records are immutable).
@@ -81,4 +88,6 @@ The `audit_trail` table has RLS enabled with the following policies:
 - `SELECT` — allowed for authenticated users.
 
 These policies are defined in `002_audit_trail.sql` and are created idempotently via a
-`DO $$` block, so re-running the migration will not produce duplicate-policy errors.
+`DO $$` block, so re-running the migration will not produce duplicate-policy errors. Since
+Supabase's `service_role` bypasses RLS, a database trigger also rejects every `UPDATE` or
+`DELETE`, including statements issued with that role.

@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import * as fc from 'fast-check';
 import { SpatialService } from './spatial.service';
 import { SupabaseClientService } from '../supabase/supabase-client.service';
 import { AuditService } from '../audit/audit.service';
@@ -19,6 +20,13 @@ describe('SpatialService', () => {
       ] as [number, number][],
     },
   };
+  const parcelRingArbitrary = fc.array(
+    fc.tuple(
+      fc.integer({ min: -180, max: 180 }),
+      fc.integer({ min: -90, max: 90 }),
+    ),
+    { minLength: 3, maxLength: 8 },
+  );
 
   beforeEach(async () => {
     supabaseMock = { rpc: jest.fn() };
@@ -82,6 +90,55 @@ describe('SpatialService', () => {
     it('only calls supabase.rpc once (stage 2 is skipped)', async () => {
       await service.verifySpatial(validDto);
       expect(supabaseMock.rpc).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a ring with fewer than three coordinates without calling RPC', async () => {
+      const result = await service.verifySpatial({
+        ...validDto,
+        parcelRing: { coordinates: [[3, 6], [4, 6]] },
+      });
+
+      expect(result.outcome).toBe('rejected_invalid_geometry');
+      expect(result.diagnosticCode).toBe('GEOM_INVALID');
+      expect(supabaseMock.rpc).not.toHaveBeenCalled();
+    });
+
+    it('audits a ring with fewer than three coordinates', async () => {
+      await service.verifySpatial({
+        ...validDto,
+        parcelRing: { coordinates: [] },
+      });
+
+      expect(auditMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'REJECTED_INVALID_GEOMETRY' }),
+      );
+    });
+
+    it.each([
+      {
+        name: 'non-finite coordinates',
+        coordinates: [[3, 6], [4, Number.NaN], [4, 7]] as [number, number][],
+      },
+      {
+        name: 'coordinates outside WGS 84 ranges',
+        coordinates: [[181, 6], [4, 6], [4, 7]] as [number, number][],
+      },
+      {
+        name: 'fewer than three distinct vertices',
+        coordinates: [[3, 6], [3, 6], [3, 6]] as [number, number][],
+      },
+    ])('rejects $name before calling PostGIS', async ({ coordinates }) => {
+      const result = await service.verifySpatial({
+        ...validDto,
+        parcelRing: { coordinates },
+      });
+
+      expect(result.outcome).toBe('rejected_invalid_geometry');
+      expect(result.diagnosticCode).toBe('GEOM_INVALID');
+      expect(supabaseMock.rpc).not.toHaveBeenCalled();
+      expect(auditMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'REJECTED_INVALID_GEOMETRY' }),
+      );
     });
   });
 
@@ -231,6 +288,59 @@ describe('SpatialService', () => {
         });
       await expect(service.verifySpatial(validDto)).rejects.toThrow(
         'Spatial overlap check failed',
+      );
+    });
+  });
+
+  describe('property invariants', () => {
+    it('audits all generated invalid geometries with GEOM_INVALID', async () => {
+      await fc.assert(
+        fc.asyncProperty(parcelRingArbitrary, async (coordinates) => {
+          supabaseMock.rpc
+            .mockReset()
+            .mockResolvedValueOnce({ data: { is_valid: false }, error: null });
+          auditMock.record.mockClear();
+
+          const result = await service.verifySpatial({
+            ...validDto,
+            parcelRing: { coordinates },
+          });
+
+          expect(result.outcome).toBe('rejected_invalid_geometry');
+          expect(result.diagnosticCode).toBe('GEOM_INVALID');
+          expect(auditMock.record).toHaveBeenCalledTimes(1);
+          expect(auditMock.record).toHaveBeenCalledWith(
+            expect.objectContaining({ outcome: 'REJECTED_INVALID_GEOMETRY' }),
+          );
+        }),
+      );
+    });
+
+    it('audits all generated overlaps with PARCEL_OVERLAP and a conflicting parcel ID', async () => {
+      await fc.assert(
+        fc.asyncProperty(parcelRingArbitrary, async (coordinates) => {
+          supabaseMock.rpc
+            .mockReset()
+            .mockResolvedValueOnce({ data: { is_valid: true }, error: null })
+            .mockResolvedValueOnce({
+              data: { overlaps: true, conflicting_parcel_id: 'parcel-property-test' },
+              error: null,
+            });
+          auditMock.record.mockClear();
+
+          const result = await service.verifySpatial({
+            ...validDto,
+            parcelRing: { coordinates },
+          });
+
+          expect(result.outcome).toBe('rejected_overlap');
+          expect(result.diagnosticCode).toBe('PARCEL_OVERLAP');
+          expect(result.conflictingParcelId).toBe('parcel-property-test');
+          expect(auditMock.record).toHaveBeenCalledTimes(1);
+          expect(auditMock.record).toHaveBeenCalledWith(
+            expect.objectContaining({ outcome: 'REJECTED_OVERLAP' }),
+          );
+        }),
       );
     });
   });

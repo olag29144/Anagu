@@ -43,7 +43,7 @@ export default function RegistrarPage() {
     const { data, error } = await supabase
       .from('applications')
       .select('id, citizen_id, owner_name, parcel_ref, status, spatial_hash, created_at')
-      .in('status', ['pending', 'in_review'])
+      .in('status', ['pending', 'legal_pending', 'in_review'])
       .order('created_at', { ascending: true });
 
     if (error) {
@@ -66,7 +66,7 @@ export default function RegistrarPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-semibold text-gray-900">Applications Queue</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Review pending and in-review land registration applications.
+          Review pending, legal-review, and in-review land registration applications.
         </p>
       </div>
 
@@ -166,6 +166,8 @@ export default function RegistrarPage() {
                         <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
                         Verified
                       </span>
+                    ) : app.status === 'legal_pending' ? (
+                      <span className="text-orange-700">Legal hold</span>
                     ) : (
                       <span className="text-gray-400">Pending</span>
                     )}
@@ -185,10 +187,12 @@ export default function RegistrarPage() {
                       >
                         Audit trail
                       </Link>
-                      <RegistrarActions
-                        applicationId={app.id}
-                        onActionComplete={() => void loadApplications()}
-                      />
+                      {app.status === 'in_review' && (
+                        <RegistrarActions
+                          applicationId={app.id}
+                          onActionComplete={() => void loadApplications()}
+                        />
+                      )}
                     </div>
                   </td>
                 </tr>

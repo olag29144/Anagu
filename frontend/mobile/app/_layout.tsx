@@ -1,59 +1,41 @@
 import { useEffect, useState } from 'react';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { supabase } from '@/lib/supabase';
+import { submitApplication } from '@/lib/applications-api';
 import { registerConnectivityListener } from '@/store/offline-queue';
 import type { SubmissionApiClient } from '@/store/offline-queue';
 import type { Session } from '@supabase/supabase-js';
 
-// ---------------------------------------------------------------------------
-// Minimal API client stub — replace with the real implementation in Task 4.7
-// ---------------------------------------------------------------------------
-const apiClient: SubmissionApiClient = {
-  async submitApplication(payload: Record<string, unknown>): Promise<void> {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
-
-    const response = await fetch(`${backendUrl}/applications`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Submit failed: ${response.status}`);
-    }
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Root layout
-// ---------------------------------------------------------------------------
+const apiClient: SubmissionApiClient = { submitApplication };
 
 export default function RootLayout() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Restore session on mount
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    supabase.auth.getSession()
+      .then(({ data, error }) => {
+        if (error) throw error;
+        setSession(data.session);
+        setLoading(false);
+      })
+      .catch((error: unknown) => {
+        setSessionError(
+          error instanceof Error ? error.message : 'Unable to restore your session.',
+        );
+        setLoading(false);
+      });
 
-    // Subscribe to auth state changes
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, newSession) => {
         setSession(newSession);
+        setSessionError(null);
       },
     );
 
-    // Auto-flush offline queue when connectivity is restored
     const unsubscribeNetwork = registerConnectivityListener(apiClient);
 
     return () => {
@@ -62,18 +44,27 @@ export default function RootLayout() {
     };
   }, []);
 
-  // Redirect to login when auth state is resolved and there is no session
   useEffect(() => {
-    if (!loading && !session) {
+    if (!loading && !session && !sessionError) {
       router.replace('/login');
     }
-  }, [loading, session]);
+  }, [loading, session, sessionError]);
 
   if (loading) {
     return (
       <View style={styles.loader}>
         <ActivityIndicator size="large" color="#15803d" />
         <StatusBar style="auto" />
+      </View>
+    );
+  }
+
+  if (sessionError) {
+    return (
+      <View style={styles.loader}>
+        <Text style={styles.error} accessibilityRole="alert">
+          Unable to restore your session: {sessionError}
+        </Text>
       </View>
     );
   }
@@ -103,5 +94,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#f9fafb',
+  },
+  error: {
+    color: '#b91c1c',
+    textAlign: 'center',
+    padding: 24,
   },
 });

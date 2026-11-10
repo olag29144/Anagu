@@ -492,7 +492,7 @@ describe("LandTitleNFT", function () {
         nft
           .connect(citizen)
           .transferFrom(citizen.address, randomUser.address, tokenId)
-      ).to.be.reverted;
+      ).to.be.revertedWith("LandTitleNFT: direct transfers are disabled");
     });
 
     it("blocks safeTransferFrom on a revoked token", async function () {

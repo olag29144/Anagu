@@ -40,3 +40,20 @@ BEGIN
   END IF;
 END;
 $$;
+
+-- RLS is bypassed by service_role, so enforce immutability at the table level too.
+CREATE OR REPLACE FUNCTION public.reject_audit_trail_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_trail is append-only; % is not permitted', TG_OP
+    USING ERRCODE = '55000';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS audit_trail_reject_mutation ON public.audit_trail;
+CREATE TRIGGER audit_trail_reject_mutation
+  BEFORE UPDATE OR DELETE ON public.audit_trail
+  FOR EACH ROW
+  EXECUTE FUNCTION public.reject_audit_trail_mutation();

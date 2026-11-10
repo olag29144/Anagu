@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { SpatialService } from '../spatial/spatial.service';
 import { OracleService } from '../oracle/oracle.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
@@ -91,6 +96,17 @@ export class RegistrationPipelineService {
       issuingAuthority: app.issuing_authority,
     });
 
+    if (oracleResult.outcome === 'LegalVerificationPending') {
+      await this.audit.record({
+        entityId: applicationId,
+        action: 'LEGAL_VERIFICATION',
+        outcome: 'PENDING',
+        metadata: { reason: oracleResult.reason },
+      });
+      await this.updateStatus(applicationId, 'legal_pending', app.status);
+      return;
+    }
+
     if (oracleResult.outcome !== 'SuccessfullyVerified') {
       await this.reject(
         applicationId,
@@ -103,8 +119,13 @@ export class RegistrationPipelineService {
     // ------------------------------------------------------------------
     // Stage 3 — Move to in_review, await Registrar (Req 9.1)
     // ------------------------------------------------------------------
+    await this.spatial.persistVerifiedParcel(
+      applicationId,
+      app.parcel_ring ?? { coordinates: [] },
+    );
+
     this.logger.log(`[${applicationId}] Stage 3 — Setting status to in_review`);
-    await this.updateStatus(applicationId, 'in_review');
+    await this.updateStatus(applicationId, 'in_review', app.status);
   }
 
   /**
@@ -118,6 +139,24 @@ export class RegistrationPipelineService {
     registrarId: string,
   ): Promise<void> {
     const app = await this.loadApplication(applicationId);
+    if (app.status !== 'in_review') {
+      throw new ConflictException(
+        `Application ${applicationId} cannot be approved while it is ${app.status}; expected in_review`,
+      );
+    }
+
+    const { data: parcel, error: parcelLookupError } = await this.supabase.raw
+      .from('parcels')
+      .select('id')
+      .eq('application_id', applicationId)
+      .single();
+
+    if (parcelLookupError || !parcel) {
+      throw new NotFoundException(
+        `Parcel for application ${applicationId} not found: ${parcelLookupError?.message ?? 'no parcel record'}`,
+      );
+    }
+    const parcelId = (parcel as { id: string }).id;
 
     // ------------------------------------------------------------------
     // Stage 4 — Audit Registrar approval (Req 7.9, 9.1)
@@ -135,12 +174,21 @@ export class RegistrationPipelineService {
     // Stage 5 — Mint blockchain NFT (Req 3.1, 9.1)
     // ------------------------------------------------------------------
     this.logger.log(`[${applicationId}] Stage 5 — Minting NFT`);
+    const parcelWkt = this.spatial.ringToWKT(
+      app.parcel_ring ?? { coordinates: [] },
+    );
     const { tokenId, txHash } = await this.blockchain.mintTitle(
       app.owner_wallet_address,
       app.parcel_ref,
-      app.parcel_ref,                            // spatialHash field (parcel_ref used until spatial_hash stored)
+      parcelWkt,
       app.title_metadata_uri ?? 'ipfs://pending',
     );
+    await this.audit.record({
+      entityId: applicationId,
+      action: 'BLOCKCHAIN_REGISTRATION',
+      outcome: 'SUCCESS',
+      metadata: { tokenId: tokenId.toString(), txHash },
+    });
 
     // ------------------------------------------------------------------
     // Stage 6 — Persist land title in Supabase (Req 3.3, 9.1)
@@ -152,7 +200,7 @@ export class RegistrationPipelineService {
         application_id: applicationId,
         token_id: tokenId.toString(),
         owner_id: app.citizen_id,
-        parcel_id: app.id,
+        parcel_id: parcelId,
         tx_hash: txHash,
         issued_at: new Date().toISOString(),
       });
@@ -160,6 +208,21 @@ export class RegistrationPipelineService {
     if (titleError) {
       throw new Error(`Failed to insert land title: ${titleError.message}`);
     }
+
+    const { error: parcelUpdateError } = await this.supabase.raw
+      .from('parcels')
+      .update({ token_id: tokenId.toString(), status: 'registered' })
+      .eq('id', parcelId);
+
+    if (parcelUpdateError) {
+      throw new Error(`Failed to register parcel: ${parcelUpdateError.message}`);
+    }
+    await this.audit.record({
+      entityId: applicationId,
+      action: 'NFT_ISSUANCE',
+      outcome: 'ISSUED',
+      metadata: { tokenId: tokenId.toString(), parcelId },
+    });
 
     // ------------------------------------------------------------------
     // Stage 7 — Publish MQTT notification (Req 6.1, 9.1)
@@ -170,13 +233,19 @@ export class RegistrationPipelineService {
       {
         tokenId: tokenId.toString(),
         owner: app.owner_wallet_address,
-        parcelId: app.id,
+        parcelId,
         timestamp: new Date().toISOString(),
       },
       MQTT_TOPICS.TITLE_ISSUED.qos,
     );
+    await this.audit.record({
+      entityId: applicationId,
+      action: 'MQTT_NOTIFICATION',
+      outcome: 'PUBLISHED',
+      metadata: { topic: MQTT_TOPICS.TITLE_ISSUED.topic, tokenId: tokenId.toString() },
+    });
 
-    await this.updateStatus(applicationId, 'completed');
+    await this.updateStatus(applicationId, 'completed', app.status, registrarId);
     this.logger.log(`[${applicationId}] Pipeline completed — tokenId=${tokenId}`);
   }
 
@@ -188,21 +257,40 @@ export class RegistrationPipelineService {
    * Reject an application at the given stage.
    * Writes an audit entry, sets status to `rejected`, and publishes MQTT (Req 9.2).
    */
-  private async reject(
+  async rejectApplication(
     applicationId: string,
-    stage: PipelineStage,
-    reason: string,
+    actorId: string,
+    reason = 'Rejected by registrar',
+    stage: PipelineStage | 'REGISTRAR_REJECTION' = 'REGISTRAR_REJECTION',
+    allowPending = false,
   ): Promise<void> {
+    const app = await this.loadApplication(applicationId);
+    const allowedStatuses = allowPending ? ['pending', 'in_review'] : ['in_review'];
+    if (!allowedStatuses.includes(app.status)) {
+      throw new ConflictException(
+        `Application ${applicationId} cannot be rejected while it is ${app.status}; expected ${allowedStatuses.join(' or ')}`,
+      );
+    }
+
     this.logger.warn(`[${applicationId}] Rejected at ${stage}: ${reason}`);
 
     await this.audit.record({
       entityId: applicationId,
+      actorId,
       action: stage,
       outcome: 'REJECTED',
       metadata: { reason },
     });
 
-    await this.updateStatus(applicationId, 'rejected');
+    await this.updateStatus(applicationId, 'rejected', app.status, actorId);
+  }
+
+  private async reject(
+    applicationId: string,
+    stage: PipelineStage,
+    reason: string,
+  ): Promise<void> {
+    await this.rejectApplication(applicationId, 'system', reason, stage, true);
   }
 
   /**
@@ -212,6 +300,8 @@ export class RegistrationPipelineService {
   private async updateStatus(
     applicationId: string,
     status: ApplicationStatus,
+    previousStatus: ApplicationStatus,
+    actorId?: string,
   ): Promise<void> {
     const { error } = await this.supabase.raw
       .from('applications')
@@ -221,6 +311,14 @@ export class RegistrationPipelineService {
     if (error) {
       throw new Error(`Failed to update application status: ${error.message}`);
     }
+
+    await this.audit.record({
+      entityId: applicationId,
+      ...(actorId !== undefined && { actorId }),
+      action: 'APPLICATION_STATUS_TRANSITION',
+      outcome: status.toUpperCase(),
+      metadata: { from: previousStatus, to: status },
+    });
 
     await this.mqtt.publish(
       MQTT_TOPICS.REGISTRATION_STATUS.topic,

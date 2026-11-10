@@ -1,5 +1,6 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
+import { MMKV } from 'react-native-mmkv';
 
 /**
  * Supabase client for React Native.
@@ -12,12 +13,15 @@ import { createClient } from '@supabase/supabase-js';
  */
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+const authStorage = new MMKV({ id: 'anagu-auth' });
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    // Persist the session in AsyncStorage / SecureStore via Expo's native APIs.
-    // Supabase v2 uses localStorage by default; on React Native we override
-    // this with a custom storage adapter when wiring up the full auth flow.
+    storage: {
+      getItem: (key) => authStorage.getString(key) ?? null,
+      setItem: (key, value) => authStorage.set(key, value),
+      removeItem: (key) => authStorage.delete(key),
+    },
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: false,

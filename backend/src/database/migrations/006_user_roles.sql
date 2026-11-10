@@ -8,3 +8,12 @@ CREATE TABLE IF NOT EXISTS user_roles (
              CHECK (role IN ('citizen', 'surveyor', 'registrar', 'land_admin', 'governor')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE user_roles ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can read their own role" ON user_roles;
+CREATE POLICY "Users can read their own role"
+  ON user_roles
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);

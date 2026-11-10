@@ -1,23 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { BlockchainService } from '../blockchain/blockchain.service';
 
 export interface StorageFields {
-  /** uint256 tokenId — 256 bits */
   S_id: number;
-  /** bytes32 keccak256(WKT) — 256 bits */
   S_geom: number;
-  /** Ethereum address — 160 bits */
   S_owner: number;
-  /** IPFS CID in titleMetadata string (~32 bytes = 256 bits) */
   S_oracle: number;
-  /** uint256 block.timestamp — 256 bits */
   S_time: number;
-  /** bool isRevoked — 8 bits */
   S_rev: number;
-  /** bytes32 mintTxHash — 256 bits */
   S_sig: number;
 }
 
 export interface StorageReport {
+  tokenId: string;
+  owner: string;
+  revoked: boolean;
+  titleMetadataBytes: number;
   fields: StorageFields;
   perRecordBits: number;
   proposedPerRecordBytes: number;
@@ -28,109 +26,127 @@ export interface StorageReport {
   parcels: number;
 }
 
-/**
- * StorageAnalysisService — measures the on-chain storage footprint of a land title
- * record and computes the reduction over a conventional (naive) baseline.
- *
- * On-chain fields (from design.md — Component 10 / on-chain storage fields table):
- *   S_id    uint256   tokenId                  256 bits
- *   S_geom  bytes32   keccak256 of WKT         256 bits
- *   S_owner address   NFT holder               160 bits
- *   S_oracle string   IPFS CID (~32 B)         256 bits
- *   S_time  uint256   block.timestamp          256 bits
- *   S_rev   bool      isRevoked                  8 bits
- *   S_sig   bytes32   mintTxHash               256 bits
- *   ─────────────────────────────────────────────────────
- *   Total fixed fields                       1,448 bits = 181 bytes
- *
- * Baseline design stores the full WKT geometry string on-chain (~200 chars) plus
- * an owner address (20 bytes) + timestamp (32 bytes) + ID (32 bytes) = 284 bytes.
- *
- * Requirements: 10.4, 10.5
- */
+const BASELINE_WKT_SAMPLES = [
+  'POLYGON((3 6, 3.001 6, 3.001 6.001, 3 6.001, 3 6))',
+  'POLYGON((7.4 9.1, 7.402 9.1, 7.402 9.102, 7.4 9.102, 7.4 9.1))',
+  'POLYGON((5.1 6.5, 5.103 6.5, 5.103 6.503, 5.1 6.503, 5.1 6.5))',
+  'POLYGON((8 10, 8.004 10, 8.004 10.003, 8 10.003, 8 10))',
+  'POLYGON((4.8 7.2, 4.802 7.2, 4.802 7.202, 4.8 7.202, 4.8 7.2))',
+  'POLYGON((6.2 8.1, 6.205 8.1, 6.205 8.104, 6.2 8.104, 6.2 8.1))',
+  'POLYGON((9.3 11.4, 9.306 11.4, 9.306 11.405, 9.3 11.405, 9.3 11.4))',
+  'POLYGON((2.9 5.4, 2.903 5.4, 2.903 5.403, 2.9 5.403, 2.9 5.4))',
+  'POLYGON((10.1 12.2, 10.108 12.2, 10.108 12.206, 10.1 12.206, 10.1 12.2))',
+  'POLYGON((3.7 4.6, 3.704 4.6, 3.704 4.604, 3.7 4.604, 3.7 4.6))',
+];
+
 @Injectable()
 export class StorageAnalysisService {
-  /**
-   * Return the bit length of each of the seven defined on-chain storage fields.
-   * Requirements: 10.4
-   */
-  measureOnChainFields(): StorageFields {
-    return {
-      S_id: 256,    // uint256 tokenId
-      S_geom: 256,  // bytes32 spatialHash (keccak256 of WKT geometry)
-      S_owner: 160, // address (20 bytes — Ethereum address)
-      S_oracle: 256, // IPFS CID stored as string in titleMetadata (~32 bytes = 256 bits)
-      S_time: 256,  // uint256 block.timestamp
-      S_rev: 8,     // bool isRevoked (1 byte)
-      S_sig: 256,   // bytes32 mintTxHash
+  constructor(private readonly blockchain: BlockchainService) {}
+
+  async measureOnChainFields(tokenId: bigint): Promise<{
+    fields: StorageFields;
+    owner: string;
+    revoked: boolean;
+    titleMetadataBytes: number;
+  }> {
+    if (tokenId <= 0n) {
+      throw new BadRequestException('tokenId must be a positive integer');
+    }
+
+    const [metadata, owner, revoked] = await Promise.all([
+      this.blockchain.getTitleMetadata(tokenId),
+      this.blockchain.ownerOf(tokenId),
+      this.blockchain.isRevoked(tokenId),
+    ]);
+
+    if (typeof metadata.titleMetadata !== 'string') {
+      throw new Error(`Token ${tokenId} returned invalid title metadata`);
+    }
+
+    const titleMetadataBytes = Buffer.byteLength(metadata.titleMetadata, 'utf8');
+    const fields: StorageFields = {
+      S_id: 256,
+      S_geom: 256,
+      S_owner: 160,
+      S_oracle: titleMetadataBytes * 8,
+      S_time: 0,
+      S_rev: 8,
+      S_sig: 256,
     };
+
+    return { fields, owner, revoked, titleMetadataBytes };
   }
 
-  /**
-   * Sum all field bit lengths and convert to bytes (ceiling).
-   * Requirements: 10.4
-   */
-  computePerRecordBytes(): number {
-    const fields = this.measureOnChainFields();
-    const totalBits = Object.values(fields).reduce((a, b) => a + b, 0);
+  computePerRecordBytes(fields: StorageFields): number {
+    const totalBits = Object.values(fields).reduce((sum, bits) => sum + bits, 0);
     return Math.ceil(totalBits / 8);
   }
 
-  /**
-   * Estimate per-record storage for the naive conventional baseline design that
-   * stores the full WKT geometry string on-chain (~200 characters) plus an
-   * owner address (20 bytes), a timestamp (32 bytes), and an ID (32 bytes).
-   * Returns a size in bytes.
-   *
-   * Requirements: 10.5
-   */
   computeBaselineStoragePerRecord(): number {
-    const wktChars = 200;   // representative WKT polygon string length
-    const ownerBytes = 20;  // Ethereum address
+    const meanWktBytes =
+      BASELINE_WKT_SAMPLES.reduce(
+        (sum, wkt) => sum + Buffer.byteLength(wkt, 'utf8'),
+        0,
+      ) / BASELINE_WKT_SAMPLES.length;
+    const ownerBytes = 20;
     const timestampBytes = 32;
     const idBytes = 32;
-    return wktChars + ownerBytes + timestampBytes + idBytes; // 284 bytes
+    return Math.ceil(meanWktBytes) + ownerBytes + timestampBytes + idBytes;
   }
 
-  /**
-   * Compute percentage reduction: ((baseline - proposed) / baseline) * 100.
-   * Returns 0 when baseline is 0 to avoid division-by-zero.
-   *
-   * Requirements: 10.5
-   */
   computeReductionPercentage(proposed: number, baseline: number): number {
-    if (baseline === 0) return 0;
-    return parseFloat((((baseline - proposed) / baseline) * 100).toFixed(2));
+    if (!Number.isFinite(proposed) || !Number.isFinite(baseline) || baseline <= 0) {
+      return 0;
+    }
+
+    const reduction = ((baseline - proposed) / baseline) * 100;
+    return Math.min(100, Math.max(0, Number(reduction.toFixed(2))));
   }
 
-  /**
-   * Total network storage for a given number of parcel records.
-   */
   computeNetworkStorage(perRecordBytes: number, parcels: number): number {
+    if (!Number.isFinite(perRecordBytes) || !Number.isFinite(parcels) || parcels <= 0) {
+      return 0;
+    }
     return perRecordBytes * parcels;
   }
 
-  /**
-   * Produce a complete storage analysis report.
-   *
-   * @param parcels - Number of parcel records used for network-wide projections (default 1000).
-   * Requirements: 10.4, 10.5
-   */
-  getFullReport(parcels = 1000): StorageReport {
-    const fields = this.measureOnChainFields();
-    const perRecordBits = Object.values(fields).reduce((a, b) => a + b, 0);
-    const proposed = this.computePerRecordBytes();
-    const baseline = this.computeBaselineStoragePerRecord();
-    const reduction = this.computeReductionPercentage(proposed, baseline);
+  async getFullReport(
+    tokenId: bigint,
+    parcels = 1000,
+  ): Promise<StorageReport> {
+    if (!Number.isInteger(parcels) || parcels <= 0) {
+      throw new BadRequestException('parcels must be a positive integer');
+    }
+
+    const measured = await this.measureOnChainFields(tokenId);
+    const perRecordBits = Object.values(measured.fields).reduce(
+      (sum, bits) => sum + bits,
+      0,
+    );
+    const proposedPerRecordBytes = this.computePerRecordBytes(measured.fields);
+    const baselinePerRecordBytes = this.computeBaselineStoragePerRecord();
 
     return {
-      fields,
+      tokenId: tokenId.toString(),
+      owner: measured.owner,
+      revoked: measured.revoked,
+      titleMetadataBytes: measured.titleMetadataBytes,
+      fields: measured.fields,
       perRecordBits,
-      proposedPerRecordBytes: proposed,
-      baselinePerRecordBytes: baseline,
-      reductionPercentage: reduction,
-      networkStorageProposed: this.computeNetworkStorage(proposed, parcels),
-      networkStorageBaseline: this.computeNetworkStorage(baseline, parcels),
+      proposedPerRecordBytes,
+      baselinePerRecordBytes,
+      reductionPercentage: this.computeReductionPercentage(
+        proposedPerRecordBytes,
+        baselinePerRecordBytes,
+      ),
+      networkStorageProposed: this.computeNetworkStorage(
+        proposedPerRecordBytes,
+        parcels,
+      ),
+      networkStorageBaseline: this.computeNetworkStorage(
+        baselinePerRecordBytes,
+        parcels,
+      ),
       parcels,
     };
   }

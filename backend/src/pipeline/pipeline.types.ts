@@ -14,6 +14,7 @@ export type PipelineStage =
 /** Lifecycle states of a land-registration application. */
 export type ApplicationStatus =
   | 'pending'
+  | 'legal_pending'
   | 'in_review'
   | 'approved'
   | 'rejected'
