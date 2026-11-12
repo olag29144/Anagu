@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { StatusBadge } from '@/components/status-badge';
+import { PortalHeader } from '@/components/portal-header';
 
 interface Application {
   id: string;
@@ -46,7 +47,7 @@ export default function CitizenPage() {
       if (error) {
         setFetchError(error.message);
       } else {
-        setApplications(data ?? []);
+        setApplications((data as unknown as Application[]) ?? []);
       }
 
       setLoading(false);
@@ -56,120 +57,129 @@ export default function CitizenPage() {
   }, [router]);
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-10">
-      {/* Page header */}
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">My Applications</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Track the status of your land registration applications.
-          </p>
-        </div>
-        <Link
-          href="/citizen/submit"
-          className="rounded-md bg-primary-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-700 focus:ring-offset-2"
-        >
-          + Submit application
-        </Link>
-      </div>
+    <div className="min-h-screen bg-[#020305] text-[#F4F7FB]">
+      <PortalHeader currentRoleTitle="Citizen / Landholder Portal" />
 
-      {/* Loading state */}
-      {loading && (
-        <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-green-700 border-t-transparent" />
-        </div>
-      )}
-
-      {/* Error state */}
-      {fetchError && (
-        <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
-          Failed to load applications: {fetchError}
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!loading && applications.length === 0 && !fetchError && (
-        <div className="rounded-lg bg-white p-12 text-center shadow-sm ring-1 ring-gray-200">
-          <p className="text-sm text-gray-500">
-            You have not submitted any applications yet.
-          </p>
+      <main className="mx-auto max-w-5xl px-4 py-8">
+        {/* Page header */}
+        <div className="mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-6 border-b border-[#1E293B]">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-[#F4F7FB]">My Land Applications</h1>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                STATUTORY CADASTRE
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-[#94A3B8]">
+              Track the verification status of your land titles, Certificates of Occupancy, and deeds.
+            </p>
+          </div>
           <Link
             href="/citizen/submit"
-            className="mt-4 inline-block rounded-md bg-primary-700 px-4 py-2 text-sm font-medium text-white hover:bg-primary-900"
+            className="rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-semibold text-[#020305] shadow-sm hover:bg-[#67E8F9] transition-all flex items-center gap-1.5"
           >
-            Submit your first application
+            <span>+ Submit new title</span>
           </Link>
         </div>
-      )}
 
-      {/* Applications table */}
-      {!loading && applications.length > 0 && (
-        <div className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Application ID
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Parcel Ref
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Status
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Submitted
-                </th>
-                <th scope="col" className="relative px-6 py-3">
-                  <span className="sr-only">Audit</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 bg-white">
-              {applications.map((app) => (
-                <tr key={app.id} className="hover:bg-gray-50">
-                  <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-gray-600">
-                    {app.id.slice(0, 8)}…
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
-                    {app.parcel_ref}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4">
-                    <StatusBadge status={app.status} />
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {new Date(app.created_at).toLocaleDateString('en-NG', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-right text-sm">
-                    <Link
-                      href={`/audit/${app.id}`}
-                      className="text-primary-700 hover:underline"
-                    >
-                      View audit trail
-                    </Link>
-                  </td>
+        {/* Loading state */}
+        {loading && (
+          <div className="flex justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#38BDF8] border-t-transparent" />
+          </div>
+        )}
+
+        {/* Error state */}
+        {fetchError && (
+          <div className="mb-6 rounded-lg bg-rose-950/30 border border-rose-500/40 p-4 text-xs text-rose-300">
+            Failed to load applications: {fetchError}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!loading && applications.length === 0 && !fetchError && (
+          <div className="rounded-xl bg-[#0A0F16] p-12 text-center border border-[#1E293B]">
+            <p className="text-sm text-[#94A3B8]">
+              You have not submitted any land title applications yet.
+            </p>
+            <Link
+              href="/citizen/submit"
+              className="mt-4 inline-block rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-semibold text-[#020305] hover:bg-[#67E8F9] transition-all"
+            >
+              Submit your first application
+            </Link>
+          </div>
+        )}
+
+        {/* Applications table */}
+        {!loading && applications.length > 0 && (
+          <div className="overflow-hidden rounded-xl bg-[#0A0F16] border border-[#1E293B] shadow-xl">
+            <table className="min-w-full divide-y divide-[#1E293B]">
+              <thead className="bg-[#05080D]">
+                <tr>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Application ID
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Parcel Ref
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Status
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Submitted
+                  </th>
+                  <th scope="col" className="relative px-6 py-3.5 text-right text-[11px] font-mono uppercase tracking-wider text-[#64748B]">
+                    Audit Record
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </main>
+              </thead>
+              <tbody className="divide-y divide-[#1E293B]/60 bg-[#0A0F16]">
+                {applications.map((app) => (
+                  <tr key={app.id} className="hover:bg-[#1E293B]/30 transition-colors">
+                    <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-[#38BDF8]">
+                      {app.id}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-xs font-medium text-[#F4F7FB]">
+                      {app.parcel_ref}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <StatusBadge status={app.status} />
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-xs font-mono text-[#94A3B8]">
+                      {new Date(app.created_at).toLocaleDateString('en-NG', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-right text-xs">
+                      <Link
+                        href={`/audit/${app.id}`}
+                        className="text-[#38BDF8] hover:text-[#67E8F9] hover:underline font-mono"
+                      >
+                        Inspect Trail →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </main>
+    </div>
   );
 }

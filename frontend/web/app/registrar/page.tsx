@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { StatusBadge } from '@/components/status-badge';
+import { PortalHeader } from '@/components/portal-header';
 import { RegistrarActions } from './registrar-actions';
+import { ShieldCheck, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
 
 interface Application {
   id: string;
@@ -20,7 +22,7 @@ interface Application {
 /**
  * Registrar Dashboard — Client Component.
  *
- * Lists all applications with status `pending` or `in_review`.
+ * Lists all applications with status `pending`, `legal_pending`, or `in_review`.
  * Approve / Reject actions are handled by the RegistrarActions child component.
  */
 export default function RegistrarPage() {
@@ -49,7 +51,7 @@ export default function RegistrarPage() {
     if (error) {
       setFetchError(error.message);
     } else {
-      setApplications(data ?? []);
+      setApplications((data as unknown as Application[]) ?? []);
     }
 
     setLoading(false);
@@ -61,146 +63,164 @@ export default function RegistrarPage() {
   }, []);
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-10">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-gray-900">Applications Queue</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Review pending, legal-review, and in-review land registration applications.
-        </p>
-      </div>
+    <div className="min-h-screen bg-[#020305] text-[#F4F7FB]">
+      <PortalHeader currentRoleTitle="Land Registrar Adjudication Queue" />
 
-      {/* Loading state */}
-      {loading && (
-        <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-green-700 border-t-transparent" />
+      <main className="mx-auto max-w-7xl px-4 py-8">
+        {/* Header */}
+        <div className="mb-8 pb-6 border-b border-[#1E293B]">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-[#F4F7FB]">
+              Cadastral Applications Adjudication Queue
+            </h1>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/30">
+              MINISTRY OF LANDS BUREAU
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-[#94A3B8]">
+            Review pending applications, inspect PostGIS spatial collision proofs, and adjudicate ERC-721 deed minting.
+          </p>
         </div>
-      )}
 
-      {fetchError && (
-        <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
-          Failed to load applications: {fetchError}
-        </div>
-      )}
+        {/* Loading state */}
+        {loading && (
+          <div className="flex justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#38BDF8] border-t-transparent" />
+          </div>
+        )}
 
-      {!loading && applications.length === 0 && !fetchError && (
-        <div className="rounded-lg bg-white p-12 text-center shadow-sm ring-1 ring-gray-200">
-          <p className="text-sm text-gray-500">No applications pending review.</p>
-        </div>
-      )}
+        {fetchError && (
+          <div className="mb-6 rounded-lg bg-rose-950/30 border border-rose-500/40 p-4 text-xs text-rose-300">
+            Failed to load applications: {fetchError}
+          </div>
+        )}
 
-      {!loading && applications.length > 0 && (
-        <div className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Applicant
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Parcel Ref
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Status
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Spatial Result
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Oracle Result
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Submitted
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500"
-                >
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 bg-white">
-              {applications.map((app) => (
-                <tr key={app.id} className="hover:bg-gray-50">
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
-                    {app.owner_name}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
-                    {app.parcel_ref}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4">
-                    <StatusBadge status={app.status} />
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {app.spatial_hash ? (
-                      <span className="inline-flex items-center gap-1 text-green-700">
-                        <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                        Verified
-                      </span>
-                    ) : (
-                      <span className="text-gray-400">—</span>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {app.status === 'in_review' ? (
-                      <span className="inline-flex items-center gap-1 text-green-700">
-                        <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                        Verified
-                      </span>
-                    ) : app.status === 'legal_pending' ? (
-                      <span className="text-orange-700">Legal hold</span>
-                    ) : (
-                      <span className="text-gray-400">Pending</span>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {new Date(app.created_at).toLocaleDateString('en-NG', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-3">
-                      <Link
-                        href={`/audit/${app.id}`}
-                        className="text-xs text-primary-700 hover:underline"
-                      >
-                        Audit trail
-                      </Link>
-                      {app.status === 'in_review' && (
-                        <RegistrarActions
-                          applicationId={app.id}
-                          onActionComplete={() => void loadApplications()}
-                        />
-                      )}
-                    </div>
-                  </td>
+        {!loading && applications.length === 0 && !fetchError && (
+          <div className="rounded-xl bg-[#0A0F16] p-12 text-center border border-[#1E293B]">
+            <p className="text-sm text-[#94A3B8]">No applications pending registrar review at this time.</p>
+          </div>
+        )}
+
+        {!loading && applications.length > 0 && (
+          <div className="overflow-hidden rounded-xl bg-[#0A0F16] border border-[#1E293B] shadow-xl">
+            <table className="min-w-full divide-y divide-[#1E293B]">
+              <thead className="bg-[#05080D]">
+                <tr>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Applicant
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Parcel Ref
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Status
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Spatial Proof
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Oracle Verification
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Submitted
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3.5 text-right text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                  >
+                    Adjudication
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </main>
+              </thead>
+              <tbody className="divide-y divide-[#1E293B]/60 bg-[#0A0F16]">
+                {applications.map((app) => (
+                  <tr key={app.id} className="hover:bg-[#1E293B]/30 transition-colors">
+                    <td className="whitespace-nowrap px-6 py-4 text-xs font-semibold text-[#F4F7FB]">
+                      {app.owner_name}
+                      <span className="block font-mono text-[10px] text-[#64748B]">{app.id}</span>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-xs font-mono text-[#38BDF8]">
+                      {app.parcel_ref}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <StatusBadge status={app.status} />
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-xs font-mono">
+                      {app.spatial_hash ? (
+                        <span className="inline-flex items-center gap-1.5 text-emerald-400">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                          <span>{app.spatial_hash.slice(0, 10)}…</span>
+                        </span>
+                      ) : (
+                        <span className="text-[#64748B]">Pending PostGIS</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-xs font-mono">
+                      {app.status === 'in_review' ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-400">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Dual-Oracle Passed</span>
+                        </span>
+                      ) : app.status === 'legal_pending' ? (
+                        <span className="inline-flex items-center gap-1 text-amber-400">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span>Legal Hold</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[#64748B]">
+                          <Clock className="h-3.5 w-3.5" />
+                          <span>In Pipeline</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-xs font-mono text-[#94A3B8]">
+                      {new Date(app.created_at).toLocaleDateString('en-NG', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        <Link
+                          href={`/audit/${app.id}`}
+                          className="text-xs font-mono text-[#38BDF8] hover:underline"
+                        >
+                          Audit
+                        </Link>
+                        {app.status === 'in_review' && (
+                          <RegistrarActions
+                            applicationId={app.id}
+                            onActionComplete={() => void loadApplications()}
+                          />
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </main>
+    </div>
   );
 }

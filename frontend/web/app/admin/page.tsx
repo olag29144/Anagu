@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { StatusBadge } from '@/components/status-badge';
+import { PortalHeader } from '@/components/portal-header';
+import { Layers, FileCheck, ShieldAlert } from 'lucide-react';
 
 interface Application {
   id: string;
@@ -23,9 +25,6 @@ interface LandTitle {
 
 /**
  * Admin Dashboard — Client Component.
- *
- * Shows aggregated stats (total applications, total NFTs issued, total
- * revocations) and a full application list with a link to the audit trail.
  */
 export default function AdminPage() {
   const router = useRouter();
@@ -59,10 +58,10 @@ export default function AdminPage() {
       ]);
 
       if (appsResult.error) setAppsError(appsResult.error.message);
-      else setApplications(appsResult.data ?? []);
+      else setApplications((appsResult.data as unknown as Application[]) ?? []);
 
       if (titlesResult.error) setTitlesError(titlesResult.error.message);
-      else setTitles(titlesResult.data ?? []);
+      else setTitles((titlesResult.data as unknown as LandTitle[]) ?? []);
 
       setLoading(false);
     }
@@ -75,190 +74,230 @@ export default function AdminPage() {
   const totalRevocations = titles.filter((t) => t.status === 'revoked').length;
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-10">
-      {/* Header */}
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Registry Management</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Land Administrator overview of all applications and issued titles.
+    <div className="min-h-screen bg-[#020305] text-[#F4F7FB]">
+      <PortalHeader currentRoleTitle="Cadastre Administrator" />
+
+      <main className="mx-auto max-w-7xl px-4 py-8">
+        {/* Header */}
+        <div className="mb-8 pb-6 border-b border-[#1E293B]">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-[#F4F7FB]">
+              State Land Registry Administration
+            </h1>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/30">
+              DIRECTORATE LEVEL
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-[#94A3B8]">
+            Comprehensive executive oversight across all statutory applications, minted ERC-721 deeds, and revocations.
           </p>
         </div>
-      </div>
 
-      {/* Loading state */}
-      {loading && (
-        <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-green-700 border-t-transparent" />
-        </div>
-      )}
-
-      {!loading && (
-        <>
-          {/* Stats cards */}
-          <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <StatCard label="Total Applications" value={totalApplications} color="blue" />
-            <StatCard label="NFT Titles Issued" value={totalNftsIssued} color="green" />
-            <StatCard label="Total Revocations" value={totalRevocations} color="red" />
+        {/* Loading state */}
+        {loading && (
+          <div className="flex justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#38BDF8] border-t-transparent" />
           </div>
+        )}
 
-          {/* All Applications */}
-          <section className="mb-10">
-            <h2 className="mb-4 text-lg font-medium text-gray-900">All Applications</h2>
+        {!loading && (
+          <>
+            {/* Stats cards */}
+            <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StatCard
+                label="Total Applications"
+                value={totalApplications}
+                color="blue"
+                icon={Layers}
+              />
+              <StatCard
+                label="NFT Titles Issued"
+                value={totalNftsIssued}
+                color="green"
+                icon={FileCheck}
+              />
+              <StatCard
+                label="Statutory Revocations"
+                value={totalRevocations}
+                color="red"
+                icon={ShieldAlert}
+              />
+            </div>
 
-            {appsError && (
-              <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
-                Failed to load applications: {appsError}
+            {/* All Applications */}
+            <section className="mb-10">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-[#F4F7FB]">
+                  All Cadastral Applications ({applications.length})
+                </h2>
               </div>
-            )}
 
-            {applications.length === 0 && !appsError && (
-              <p className="text-sm text-gray-500">No applications yet.</p>
-            )}
+              {appsError && (
+                <div className="mb-4 rounded-lg bg-rose-950/30 border border-rose-500/40 p-4 text-xs text-rose-300">
+                  Failed to load applications: {appsError}
+                </div>
+              )}
 
-            {applications.length > 0 && (
-              <div className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      {['Application ID', 'Owner', 'Parcel Ref', 'Status', 'Submitted', 'Audit'].map(
-                        (col) => (
+              {applications.length === 0 && !appsError && (
+                <div className="rounded-xl bg-[#0A0F16] p-8 text-center border border-[#1E293B]">
+                  <p className="text-xs text-[#94A3B8]">No applications recorded in registry yet.</p>
+                </div>
+              )}
+
+              {applications.length > 0 && (
+                <div className="overflow-hidden rounded-xl bg-[#0A0F16] border border-[#1E293B] shadow-xl">
+                  <table className="min-w-full divide-y divide-[#1E293B]">
+                    <thead className="bg-[#05080D]">
+                      <tr>
+                        {['Application ID', 'Owner', 'Parcel Ref', 'Status', 'Submitted', 'Audit'].map(
+                          (col) => (
+                            <th
+                              key={col}
+                              scope="col"
+                              className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
+                            >
+                              {col}
+                            </th>
+                          ),
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1E293B]/60 bg-[#0A0F16]">
+                      {applications.map((app) => (
+                        <tr key={app.id} className="hover:bg-[#1E293B]/30 transition-colors">
+                          <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-[#38BDF8]">
+                            {app.id}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-xs font-semibold text-[#F4F7FB]">
+                            {app.owner_name}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-xs font-mono text-[#94A3B8]">
+                            {app.parcel_ref}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4">
+                            <StatusBadge status={app.status} />
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-xs font-mono text-[#94A3B8]">
+                            {new Date(app.created_at).toLocaleDateString('en-NG', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                            })}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-xs">
+                            <Link
+                              href={`/audit/${app.id}`}
+                              className="text-[#38BDF8] hover:underline font-mono"
+                            >
+                              Audit trail →
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {/* Issued Titles */}
+            <section>
+              <h2 className="mb-4 text-sm font-semibold text-[#F4F7FB]">
+                Issued Land Titles (ERC-721 Deeds)
+              </h2>
+
+              {titlesError && (
+                <div className="mb-4 rounded-lg bg-rose-950/30 border border-rose-500/40 p-4 text-xs text-rose-300">
+                  Failed to load titles: {titlesError}
+                </div>
+              )}
+
+              {titles.length === 0 && !titlesError && (
+                <div className="rounded-xl bg-[#0A0F16] p-8 text-center border border-[#1E293B]">
+                  <p className="text-xs text-[#94A3B8]">No titles issued yet.</p>
+                </div>
+              )}
+
+              {titles.length > 0 && (
+                <div className="overflow-hidden rounded-xl bg-[#0A0F16] border border-[#1E293B] shadow-xl">
+                  <table className="min-w-full divide-y divide-[#1E293B]">
+                    <thead className="bg-[#05080D]">
+                      <tr>
+                        {['Token ID', 'Status', 'Issued At', 'Audit Record'].map((col) => (
                           <th
                             key={col}
                             scope="col"
-                            className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
+                            className="px-6 py-3.5 text-left text-[11px] font-mono uppercase tracking-wider text-[#64748B]"
                           >
                             {col}
                           </th>
-                        ),
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {applications.map((app) => (
-                      <tr key={app.id} className="hover:bg-gray-50">
-                        <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-gray-600">
-                          {app.id.slice(0, 8)}…
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
-                          {app.owner_name}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
-                          {app.parcel_ref}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4">
-                          <StatusBadge status={app.status} />
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                          {new Date(app.created_at).toLocaleDateString('en-NG', {
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                          })}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm">
-                          <Link
-                            href={`/audit/${app.id}`}
-                            className="text-primary-700 hover:underline"
-                          >
-                            View audit trail
-                          </Link>
-                        </td>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-
-          {/* Issued Titles */}
-          <section>
-            <h2 className="mb-4 text-lg font-medium text-gray-900">Issued Land Titles (NFTs)</h2>
-
-            {titlesError && (
-              <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
-                Failed to load titles: {titlesError}
-              </div>
-            )}
-
-            {titles.length === 0 && !titlesError && (
-              <p className="text-sm text-gray-500">No titles issued yet.</p>
-            )}
-
-            {titles.length > 0 && (
-              <div className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      {['Token ID', 'Status', 'Issued At', 'Audit'].map((col) => (
-                        <th
-                          key={col}
-                          scope="col"
-                          className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500"
-                        >
-                          {col}
-                        </th>
+                    </thead>
+                    <tbody className="divide-y divide-[#1E293B]/60 bg-[#0A0F16]">
+                      {titles.map((title) => (
+                        <tr key={title.id} className="hover:bg-[#1E293B]/30 transition-colors">
+                          <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-[#38BDF8]">
+                            #{title.token_id}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4">
+                            <StatusBadge status={title.status} />
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-xs font-mono text-[#94A3B8]">
+                            {new Date(title.issued_at).toLocaleDateString('en-NG', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                            })}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-xs">
+                            <Link
+                              href={`/audit/${title.token_id}`}
+                              className="text-[#38BDF8] hover:underline font-mono"
+                            >
+                              Verify chain trail →
+                            </Link>
+                          </td>
+                        </tr>
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {titles.map((title) => (
-                      <tr key={title.id} className="hover:bg-gray-50">
-                        <td className="whitespace-nowrap px-6 py-4 font-mono text-sm text-gray-900">
-                          #{title.token_id}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4">
-                          <StatusBadge status={title.status} />
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                          {new Date(title.issued_at).toLocaleDateString('en-NG', {
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                          })}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm">
-                          <Link
-                            href={`/audit/${title.token_id}`}
-                            className="text-primary-700 hover:underline"
-                          >
-                            View audit trail
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        </>
-      )}
-    </main>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </>
+        )}
+      </main>
+    </div>
   );
 }
-
-// ── Helper component ─────────────────────────────────────────────────────────
 
 function StatCard({
   label,
   value,
   color,
+  icon: Icon,
 }: {
   label: string;
   value: number;
   color: 'blue' | 'green' | 'red';
+  icon: React.ComponentType<{ className?: string }>;
 }) {
   const colorMap = {
-    blue: 'bg-blue-50 text-blue-700',
-    green: 'bg-green-50 text-green-700',
-    red: 'bg-red-50 text-red-700',
+    blue: 'border-[#38BDF8]/30 text-[#38BDF8]',
+    green: 'border-emerald-500/30 text-emerald-400',
+    red: 'border-rose-500/30 text-rose-400',
   };
+
   return (
-    <div className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
-      <p className="text-sm font-medium text-gray-500">{label}</p>
-      <p className={`mt-2 text-3xl font-bold ${colorMap[color]}`}>{value}</p>
+    <div className={`rounded-xl bg-[#0A0F16] p-5 border ${colorMap[color]} shadow-lg flex items-center justify-between`}>
+      <div>
+        <p className="text-xs font-mono uppercase tracking-wider text-[#94A3B8]">{label}</p>
+        <p className="mt-1 text-2xl font-bold font-mono text-[#F4F7FB]">{value}</p>
+      </div>
+      <div className={`p-3 rounded-xl bg-[#020305] border ${colorMap[color]}`}>
+        <Icon className="h-5 w-5" />
+      </div>
     </div>
   );
 }
