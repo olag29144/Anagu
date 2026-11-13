@@ -2,20 +2,25 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase';
+import { createClient, getActiveDemoAccount } from '@/lib/supabase';
 
 /**
  * Dashboard — Client Component role router.
  *
- * Reads the active session and routes the user to their role-appropriate page.
- * If no role is assigned yet, stays on this page and shows a holding message.
+ * Reads active session/role and routes the user to their role-appropriate page.
  */
 export default function DashboardPage() {
   const router = useRouter();
-  const [status, setStatus] = useState('Checking your account…');
+  const [status, setStatus] = useState('Resolving cadastral credentials & permissions…');
 
   useEffect(() => {
     async function route() {
+      const activeDemo = getActiveDemoAccount();
+      if (activeDemo) {
+        router.replace(activeDemo.defaultPath);
+        return;
+      }
+
       const supabase = createClient();
       const {
         data: { session },
@@ -48,8 +53,6 @@ export default function DashboardPage() {
 
       switch (role) {
         case 'citizen':
-          router.replace('/citizen');
-          break;
         case 'surveyor':
           router.replace('/citizen');
           break;
@@ -63,12 +66,7 @@ export default function DashboardPage() {
           router.replace('/governor');
           break;
         default:
-          // Role not yet assigned — show message
-          setStatus(
-            role
-              ? `Unknown role: ${role}. Contact your Land Administration office.`
-              : 'Your account is pending role assignment. Contact your Land Administration office.',
-          );
+          router.replace('/citizen');
           break;
       }
     }
@@ -77,10 +75,10 @@ export default function DashboardPage() {
   }, [router]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-green-700 border-t-transparent" />
-        <p className="text-gray-600">{status}</p>
+    <main className="flex min-h-screen items-center justify-center bg-[#020305] text-[#F4F7FB]">
+      <div className="text-center p-6 rounded-xl bg-[#0A0F16] border border-[#1E293B] shadow-2xl max-w-sm">
+        <div className="mx-auto mb-4 h-9 w-9 animate-spin rounded-full border-2 border-[#38BDF8] border-t-transparent" />
+        <p className="text-xs font-mono text-[#94A3B8]">{status}</p>
       </div>
     </main>
   );

@@ -3,23 +3,19 @@
 import { useState, FormEvent } from 'react';
 import Link from 'next/link';
 import { apiCall } from '@/lib/api';
+import { PortalHeader } from '@/components/portal-header';
+import { CheckCircle2, ArrowLeft, Sparkles, MapPin, FileText, User } from 'lucide-react';
 
 interface SubmitApplicationResponse {
   id: string;
 }
 
-/**
- * Submit Application — Client Component.
- *
- * Land registration submission form for citizens. On success, shows the
- * issued application ID. Errors are surfaced inline.
- */
 export default function SubmitApplicationPage() {
   const [fields, setFields] = useState({
     ownerName: '',
     documentNumber: '',
-    documentType: '',
-    issuingAuthority: '',
+    documentType: 'Certificate of Occupancy',
+    issuingAuthority: 'Lagos State Lands Bureau',
     parcelRef: '',
     ownerWalletAddress: '',
     parcelCoordinates: '',
@@ -28,6 +24,31 @@ export default function SubmitApplicationPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applicationId, setApplicationId] = useState<string | null>(null);
+
+  // Helper to pre-populate valid Nigerian cadastral parcel coordinates & details
+  const handleAutoFillCadastralSample = () => {
+    const rand = Math.floor(100 + Math.random() * 899);
+    setFields({
+      ownerName: 'Chief Babatunde Adeleke',
+      documentNumber: `LASG/LUAC/2026/${rand}`,
+      documentType: 'Certificate of Occupancy',
+      issuingAuthority: 'Lagos State Ministry of Physical Planning & Urban Development',
+      parcelRef: `LAG-ETI-2026-${rand}`,
+      ownerWalletAddress: '0x71C83812a19f20108A456789b910123456789012',
+      parcelCoordinates: JSON.stringify(
+        [
+          [3.5284, 6.4421],
+          [3.5295, 6.4421],
+          [3.5295, 6.4432],
+          [3.5284, 6.4432],
+          [3.5284, 6.4421],
+        ],
+        null,
+        2,
+      ),
+    });
+    setError(null);
+  };
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
@@ -72,16 +93,6 @@ export default function SubmitApplicationPage() {
       });
 
       setApplicationId(result.id);
-      // Reset form
-      setFields({
-        ownerName: '',
-        documentNumber: '',
-        documentType: '',
-        issuingAuthority: '',
-        parcelRef: '',
-        ownerWalletAddress: '',
-        parcelCoordinates: '',
-      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed. Please try again.');
     } finally {
@@ -89,273 +100,235 @@ export default function SubmitApplicationPage() {
     }
   }
 
-  // ── Success state ──────────────────────────────────────────────────────────
-  if (applicationId) {
-    return (
-      <main className="mx-auto max-w-2xl px-4 py-16">
-        <div className="rounded-lg bg-white p-8 shadow-sm ring-1 ring-gray-200 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-            <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <h2 className="mb-2 text-xl font-semibold text-gray-900">Application submitted</h2>
-          <p className="text-sm text-gray-600">Your application has been received and is now in the pipeline.</p>
-          <p className="mt-4 font-mono text-xs text-gray-500 bg-gray-50 rounded px-3 py-2 inline-block">
-            Application ID: {applicationId}
-          </p>
-          <div className="mt-6 flex gap-3 justify-center">
-            <Link
-              href="/citizen"
-              className="rounded-md bg-primary-700 px-4 py-2 text-sm font-medium text-white hover:bg-primary-900"
-            >
-              Back to dashboard
-            </Link>
-            <Link
-              href={`/audit/${applicationId}`}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              View audit trail
-            </Link>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  // ── Form ──────────────────────────────────────────────────────────────────
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
-      <div className="mb-6">
-        <Link href="/citizen" className="text-sm text-primary-700 hover:underline">
-          ← Back to dashboard
-        </Link>
-        <h1 className="mt-4 text-2xl font-semibold text-gray-900">Submit Application</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Complete all fields to register a land parcel.
-        </p>
-      </div>
+    <div className="min-h-screen bg-[#020305] text-[#F4F7FB]">
+      <PortalHeader currentRoleTitle="Submit Land Title Application" />
 
-      {error && (
-        <div
-          role="alert"
-          className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200"
-        >
-          {error}
+      <main className="mx-auto max-w-3xl px-4 py-8">
+        <div className="mb-6 flex items-center justify-between">
+          <Link
+            href="/citizen"
+            className="inline-flex items-center gap-1.5 text-xs font-mono text-[#94A3B8] hover:text-[#67E8F9] transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>Back to My Applications</span>
+          </Link>
+          <button
+            type="button"
+            onClick={handleAutoFillCadastralSample}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#38BDF8]/10 text-[#38BDF8] border border-[#38BDF8]/30 hover:bg-[#38BDF8]/20 text-xs font-mono transition-all"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>Auto-fill Valid Cadastral Sample</span>
+          </button>
         </div>
-      )}
 
-      <div className="rounded-lg bg-white p-8 shadow-sm ring-1 ring-gray-200">
-        <form onSubmit={handleSubmit} noValidate className="space-y-6">
-          {/* Owner information */}
-          <fieldset>
-            <legend className="mb-4 text-sm font-semibold text-gray-900">
-              Owner Information
-            </legend>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="ownerName"
-                  className="mb-1.5 block text-sm font-medium text-gray-700"
-                >
-                  Owner name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="ownerName"
-                  name="ownerName"
-                  type="text"
-                  required
-                  value={fields.ownerName}
-                  onChange={handleChange}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-700 focus:outline-none focus:ring-1 focus:ring-primary-700"
-                  placeholder="Full legal name"
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="ownerWalletAddress"
-                  className="mb-1.5 block text-sm font-medium text-gray-700"
-                >
-                  Wallet address <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="ownerWalletAddress"
-                  name="ownerWalletAddress"
-                  type="text"
-                  required
-                  value={fields.ownerWalletAddress}
-                  onChange={handleChange}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-700 focus:outline-none focus:ring-1 focus:ring-primary-700"
-                  placeholder="0x..."
-                />
-              </div>
+        {/* Success modal / card */}
+        {applicationId ? (
+          <div className="rounded-xl bg-[#0A0F16] p-8 border border-emerald-500/40 text-center shadow-2xl">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+              <CheckCircle2 className="h-6 w-6" />
             </div>
-          </fieldset>
-
-          {/* Document information */}
-          <fieldset>
-            <legend className="mb-4 text-sm font-semibold text-gray-900">
-              Title Document
-            </legend>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="documentNumber"
-                  className="mb-1.5 block text-sm font-medium text-gray-700"
-                >
-                  Document number <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="documentNumber"
-                  name="documentNumber"
-                  type="text"
-                  required
-                  value={fields.documentNumber}
-                  onChange={handleChange}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-700 focus:outline-none focus:ring-1 focus:ring-primary-700"
-                  placeholder="e.g. LGA/2024/00123"
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="documentType"
-                  className="mb-1.5 block text-sm font-medium text-gray-700"
-                >
-                  Document type <span className="text-red-500">*</span>
-                </label>
-                <select
-                  id="documentType"
-                  name="documentType"
-                  required
-                  value={fields.documentType}
-                  onChange={handleChange}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-700 focus:outline-none focus:ring-1 focus:ring-primary-700"
-                >
-                  <option value="">Select type…</option>
-                  <option value="Certificate of Occupancy">Certificate of Occupancy</option>
-                  <option value="Right of Occupancy">Right of Occupancy</option>
-                  <option value="Deed of Assignment">Deed of Assignment</option>
-                  <option value="Survey Plan">Survey Plan</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-
-              <div className="sm:col-span-2">
-                <label
-                  htmlFor="issuingAuthority"
-                  className="mb-1.5 block text-sm font-medium text-gray-700"
-                >
-                  Issuing authority <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="issuingAuthority"
-                  name="issuingAuthority"
-                  type="text"
-                  required
-                  value={fields.issuingAuthority}
-                  onChange={handleChange}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-700 focus:outline-none focus:ring-1 focus:ring-primary-700"
-                  placeholder="e.g. Lagos State Land Bureau"
-                />
-              </div>
+            <h2 className="text-lg font-bold text-[#F4F7FB]">Application Successfully Queued</h2>
+            <p className="mt-1 text-xs text-[#94A3B8]">
+              Your land title dossier has been submitted to the Nigerian Cadastre Pipeline.
+            </p>
+            <div className="my-5 inline-block rounded-lg bg-[#020305] border border-[#1E293B] px-4 py-2 font-mono text-xs text-[#38BDF8]">
+              Docket Number: {applicationId}
             </div>
-          </fieldset>
-
-          {/* Parcel information */}
-          <fieldset>
-            <legend className="mb-4 text-sm font-semibold text-gray-900">
-              Parcel Information
-            </legend>
-
-            <div className="mb-4">
-              <label
-                htmlFor="parcelRef"
-                className="mb-1.5 block text-sm font-medium text-gray-700"
+            <div className="flex gap-3 justify-center">
+              <Link
+                href="/citizen"
+                className="rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-semibold text-[#020305] hover:bg-[#67E8F9] transition-all"
               >
-                Parcel reference <span className="text-red-500">*</span>
-              </label>
-              <input
-                id="parcelRef"
-                name="parcelRef"
-                type="text"
-                required
-                value={fields.parcelRef}
-                onChange={handleChange}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-700 focus:outline-none focus:ring-1 focus:ring-primary-700"
-                placeholder="e.g. LG-IKJ-2024-0001"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="parcelCoordinates"
-                className="mb-1.5 block text-sm font-medium text-gray-700"
+                Return to Applications
+              </Link>
+              <Link
+                href={`/audit/${applicationId}`}
+                className="rounded-lg border border-[#1E293B] px-4 py-2 text-xs font-mono text-[#94A3B8] hover:text-[#F4F7FB] hover:bg-[#1E293B]/60 transition-all"
               >
-                Parcel coordinates (GeoJSON polygon ring){' '}
-                <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                id="parcelCoordinates"
-                name="parcelCoordinates"
-                rows={5}
-                required
-                value={fields.parcelCoordinates}
-                onChange={handleChange}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-primary-700 focus:outline-none focus:ring-1 focus:ring-primary-700"
-                placeholder='[[3.3792,6.5244],[3.3800,6.5244],[3.3800,6.5250],[3.3792,6.5250],[3.3792,6.5244]]'
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                JSON array of <code>[longitude, latitude]</code> pairs (WGS 84, EPSG:4326).
-                First and last point must be identical to close the polygon.
+                Inspect Ledger Audit →
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl bg-[#0A0F16] p-7 border border-[#1E293B] shadow-xl">
+            <div className="mb-6 pb-4 border-b border-[#1E293B]">
+              <h1 className="text-lg font-bold text-[#F4F7FB]">Cadastral Parcel Submission</h1>
+              <p className="mt-1 text-xs text-[#94A3B8]">
+                Submit legal title documentation and WGS 84 polygon ring coordinates for PostGIS collision checks.
               </p>
             </div>
-          </fieldset>
 
-          <div className="flex items-center justify-end gap-3 border-t border-gray-100 pt-4">
-            <Link
-              href="/citizen"
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex items-center rounded-md bg-primary-700 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-700 focus:ring-offset-2 disabled:opacity-60"
-            >
-              {submitting ? (
-                <>
-                  <svg
-                    className="mr-2 h-4 w-4 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
+            {error && (
+              <div
+                role="alert"
+                className="mb-6 rounded-lg bg-rose-950/30 border border-rose-500/40 p-3.5 text-xs text-rose-300"
+              >
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} noValidate className="space-y-6">
+              {/* Owner Information */}
+              <fieldset>
+                <legend className="mb-3 text-xs font-mono uppercase tracking-wider text-[#38BDF8] flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5" />
+                  <span>1. Titleholder Information</span>
+                </legend>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="ownerName" className="block text-xs font-mono text-[#94A3B8] mb-1">
+                      Legal Owner Full Name <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      id="ownerName"
+                      name="ownerName"
+                      type="text"
+                      required
+                      value={fields.ownerName}
+                      onChange={handleChange}
+                      placeholder="e.g. Chief Babatunde Adeleke"
+                      className="w-full h-10 px-3 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
                     />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  </div>
+                  <div>
+                    <label htmlFor="ownerWalletAddress" className="block text-xs font-mono text-[#94A3B8] mb-1">
+                      Titleholder Wallet (ERC-721 Recipient) <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      id="ownerWalletAddress"
+                      name="ownerWalletAddress"
+                      type="text"
+                      required
+                      value={fields.ownerWalletAddress}
+                      onChange={handleChange}
+                      placeholder="0x71C...a19f"
+                      className="w-full h-10 px-3 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs font-mono text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
                     />
-                  </svg>
-                  Submitting…
-                </>
-              ) : (
-                'Submit application'
-              )}
-            </button>
+                  </div>
+                </div>
+              </fieldset>
+
+              {/* Title Document Information */}
+              <fieldset>
+                <legend className="mb-3 text-xs font-mono uppercase tracking-wider text-[#38BDF8] flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5" />
+                  <span>2. Statutory Document Details</span>
+                </legend>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="documentNumber" className="block text-xs font-mono text-[#94A3B8] mb-1">
+                      Document Number <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      id="documentNumber"
+                      name="documentNumber"
+                      type="text"
+                      required
+                      value={fields.documentNumber}
+                      onChange={handleChange}
+                      placeholder="e.g. LASG/LUAC/2026/0412"
+                      className="w-full h-10 px-3 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="documentType" className="block text-xs font-mono text-[#94A3B8] mb-1">
+                      Statutory Instrument <span className="text-rose-400">*</span>
+                    </label>
+                    <select
+                      id="documentType"
+                      name="documentType"
+                      value={fields.documentType}
+                      onChange={handleChange}
+                      className="w-full h-10 px-3 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
+                    >
+                      <option value="Certificate of Occupancy">Certificate of Occupancy (C of O)</option>
+                      <option value="Governor Consent">Governor Consent</option>
+                      <option value="Deed of Assignment">Deed of Assignment</option>
+                      <option value="Right of Occupancy">Right of Occupancy (R of O)</option>
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label htmlFor="issuingAuthority" className="block text-xs font-mono text-[#94A3B8] mb-1">
+                      Issuing Ministry / Bureau Authority <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      id="issuingAuthority"
+                      name="issuingAuthority"
+                      type="text"
+                      required
+                      value={fields.issuingAuthority}
+                      onChange={handleChange}
+                      placeholder="e.g. Lagos State Lands Bureau"
+                      className="w-full h-10 px-3 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </fieldset>
+
+              {/* Parcel & Spatial Coordinates */}
+              <fieldset>
+                <legend className="mb-3 text-xs font-mono uppercase tracking-wider text-[#38BDF8] flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5" />
+                  <span>3. Cadastral Coordinates & PostGIS Ring</span>
+                </legend>
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="parcelRef" className="block text-xs font-mono text-[#94A3B8] mb-1">
+                      Cadastral Parcel Reference <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      id="parcelRef"
+                      name="parcelRef"
+                      type="text"
+                      required
+                      value={fields.parcelRef}
+                      onChange={handleChange}
+                      placeholder="e.g. LAG-ETI-2026-00412"
+                      className="w-full h-10 px-3 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs font-mono text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="parcelCoordinates" className="block text-xs font-mono text-[#94A3B8] mb-1">
+                      Polygon Boundary Ring (WGS 84, EPSG:4326) <span className="text-rose-400">*</span>
+                    </label>
+                    <textarea
+                      id="parcelCoordinates"
+                      name="parcelCoordinates"
+                      rows={5}
+                      required
+                      value={fields.parcelCoordinates}
+                      onChange={handleChange}
+                      placeholder="[[3.5284, 6.4421], [3.5295, 6.4421], [3.5295, 6.4432], [3.5284, 6.4432], [3.5284, 6.4421]]"
+                      className="w-full px-3 py-2 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs font-mono text-[#38BDF8] focus:border-[#38BDF8] focus:outline-none"
+                    />
+                    <p className="mt-1 text-[11px] text-[#64748B] font-mono">
+                      First and last point must match to close boundary polygon.
+                    </p>
+                  </div>
+                </div>
+              </fieldset>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#1E293B]">
+                <Link
+                  href="/citizen"
+                  className="px-4 py-2 text-xs font-mono text-[#94A3B8] hover:text-[#F4F7FB]"
+                >
+                  Cancel
+                </Link>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-5 py-2.5 rounded-lg bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9] transition-all disabled:opacity-50"
+                >
+                  {submitting ? 'Verifying Cadastre & Submitting…' : 'Submit Application to Registry'}
+                </button>
+              </div>
+            </form>
           </div>
-        </form>
-      </div>
-    </main>
+        )}
+      </main>
+    </div>
   );
 }
