@@ -1,0 +1,2 @@
+// Deployed: 2026-11-13 15:42:01
+export const DEPLOYMENT_VERSION = '2026-11-13 15:42:01';
