@@ -5,7 +5,6 @@ import dynamic from 'next/dynamic';
 
 const MapContainer = dynamic(() => import('react-leaflet').then((mod) => mod.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import('react-leaflet').then((mod) => mod.TileLayer), { ssr: false });
-const FeatureGroup = dynamic(() => import('react-leaflet').then((mod) => mod.FeatureGroup), { ssr: false });
 
 interface ParcelMapProps {
   onBoundaryDrawn?: (wkt: string, coordinates: [number, number][]) => void;
@@ -20,83 +19,84 @@ export default function ParcelMap({
 }: ParcelMapProps) {
   const [mounted, setMounted] = useState(false);
   const [map, setMap] = useState<any>(null);
-  const [leaflet, setLeaflet] = useState<any>(null);
-  const [leafletDraw, setLeafletDraw] = useState<any>(null);
-  const featureGroupRef = useRef<any>(null);
-  const [drawnCoordinates, setDrawnCoordinates] = useState<[number, number][]>([]);
+  const [drawingEnabled, setDrawingEnabled] = useState(false);
+  const drawnLayersRef = useRef<any>(null);
 
   useEffect(() => {
     setMounted(true);
-    
-    // Dynamically import Leaflet and Leaflet Draw
-    Promise.all([
-      import('leaflet'),
-      import('leaflet-draw')
-    ]).then(([L, LD]) => {
-      setLeaflet(L.default);
-      setLeafletDraw(LD);
-    });
   }, []);
 
   useEffect(() => {
-    if (!map || !leaflet || !leafletDraw || !featureGroupRef.current) return;
+    if (!map || typeof window === 'undefined' || !(window as any).L) return;
 
-    const drawControl = new leaflet.Control.Draw({
-      draw: {
-        polygon: {
-          allowIntersection: false,
-          showArea: true,
-          metric: true,
-          shapeOptions: {
-            color: '#3b82f6',
-            weight: 2,
-            fillOpacity: 0.2,
-          },
-        },
-        rectangle: {
-          shapeOptions: {
-            color: '#3b82f6',
-            weight: 2,
-            fillOpacity: 0.2,
-          },
-        },
-        polyline: false,
-        circle: false,
-        marker: false,
-        circlemarker: false,
-      },
-      edit: {
-        featureGroup: featureGroupRef.current,
-        remove: true,
-      },
-    });
-
-    map.addControl(drawControl);
-
-    map.on(leaflet.Draw.Event.CREATED, (event: any) => {
-      const layer = event.layer;
-      const latlngs = layer.getLatLngs()[0];
-      const coords: [number, number][] = latlngs.map((ll: any) => [ll.lat, ll.lng]);
-      
-      setDrawnCoordinates(coords);
-      
-      // Convert to WKT format for PostGIS (lng, lat order)
-      const wktCoords = coords.map(([lat, lng]) => `${lng} ${lat}`).join(', ');
-      const wkt = `SRID=4326;POLYGON((${wktCoords}, ${coords[0][1]} ${coords[0][0]}))`;
-      
-      if (onBoundaryDrawn) {
-        onBoundaryDrawn(wkt, coords);
+    const L = (window as any).L;
+    
+    // Wait for Leaflet Draw to load
+    const checkDrawReady = setInterval(() => {
+      if (L.Draw && L.Control.Draw) {
+        clearInterval(checkDrawReady);
+        initializeDrawing();
       }
+    }, 100);
 
-      featureGroupRef.current?.clearLayers();
-      featureGroupRef.current?.addLayer(layer);
-    });
+    const initializeDrawing = () => {
+      drawnLayersRef.current = new L.FeatureGroup();
+      map.addLayer(drawnLayersRef.current);
+
+      const drawControl = new L.Control.Draw({
+        draw: {
+          polygon: {
+            allowIntersection: false,
+            showArea: true,
+            shapeOptions: {
+              color: '#3b82f6',
+              weight: 3,
+              fillOpacity: 0.3,
+            },
+          },
+          rectangle: {
+            shapeOptions: {
+              color: '#3b82f6',
+              weight: 3,
+              fillOpacity: 0.3,
+            },
+          },
+          polyline: false,
+          circle: false,
+          marker: false,
+          circlemarker: false,
+        },
+        edit: {
+          featureGroup: drawnLayersRef.current,
+          remove: true,
+        },
+      });
+
+      map.addControl(drawControl);
+      setDrawingEnabled(true);
+
+      map.on(L.Draw.Event.CREATED, (event: any) => {
+        const layer = event.layer;
+        drawnLayersRef.current.clearLayers();
+        drawnLayersRef.current.addLayer(layer);
+
+        const latlngs = layer.getLatLngs()[0];
+        const coords: [number, number][] = latlngs.map((ll: any) => [ll.lat, ll.lng]);
+        
+        // Convert to WKT (PostGIS format: lng, lat)
+        const wktCoords = coords.map(([lat, lng]) => `${lng} ${lat}`).join(', ');
+        const wkt = `SRID=4326;POLYGON((${wktCoords}, ${coords[0][1]} ${coords[0][0]}))`;
+        
+        if (onBoundaryDrawn) {
+          onBoundaryDrawn(wkt, coords);
+        }
+      });
+    };
 
     return () => {
-      map.off(leaflet.Draw.Event.CREATED);
-      map.removeControl(drawControl);
+      clearInterval(checkDrawReady);
     };
-  }, [map, leaflet, leafletDraw, onBoundaryDrawn]);
+  }, [map, onBoundaryDrawn]);
 
   if (!mounted) {
     return (
@@ -118,27 +118,16 @@ export default function ParcelMap({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <FeatureGroup ref={featureGroupRef} />
       </MapContainer>
 
-      {drawnCoordinates.length > 0 && (
-        <div className="absolute top-4 right-4 bg-[#0A0F16] border border-[#38BDF8]/30 p-4 rounded-lg shadow-lg z-[1000] max-w-xs">
-          <h3 className="font-semibold text-sm text-[#F4F7FB] mb-2">✓ Parcel Drawn</h3>
-          <p className="text-xs text-[#94A3B8]">
-            {drawnCoordinates.length} boundary points
-          </p>
-          <p className="text-xs text-[#64748B] mt-1">
-            Center: {drawnCoordinates[0]?.[0].toFixed(6)}, {drawnCoordinates[0]?.[1].toFixed(6)}
-          </p>
-          <p className="text-[11px] text-[#38BDF8] mt-2">
-            Coordinates auto-filled below
-          </p>
-        </div>
-      )}
-
-      <div className="absolute top-4 left-4 bg-[#0A0F16] border border-[#1E293B] p-3 rounded-lg shadow-lg z-[1000]">
-        <p className="text-xs text-[#94A3B8] font-mono">
-          📍 Use the drawing tools on the left to draw your parcel boundary
+      <div className="absolute top-4 left-4 bg-[#0A0F16] border border-[#38BDF8]/30 p-3 rounded-lg shadow-lg z-[1000] max-w-sm">
+        <p className="text-xs text-[#F4F7FB] font-semibold mb-1">
+          {drawingEnabled ? '✓ Drawing Tools Active' : '⏳ Loading Drawing Tools...'}
+        </p>
+        <p className="text-[11px] text-[#94A3B8]">
+          {drawingEnabled 
+            ? 'Use toolbar on left to draw parcel boundaries' 
+            : 'Map is loading...'}
         </p>
       </div>
     </div>
