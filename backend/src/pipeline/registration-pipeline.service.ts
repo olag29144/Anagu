@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -283,6 +284,40 @@ export class RegistrationPipelineService {
     });
 
     await this.updateStatus(applicationId, 'rejected', app.status, actorId);
+  }
+
+  async cancelApplication(
+    applicationId: string,
+    citizenId: string,
+  ): Promise<void> {
+    const app = await this.loadApplication(applicationId);
+    if (app.citizen_id !== citizenId) {
+      throw new ForbiddenException(
+        'Only the submitting applicant can cancel this application',
+      );
+    }
+
+    const cancellableStatuses: ApplicationStatus[] = [
+      'pending',
+      'legal_pending',
+      'in_review',
+    ];
+    if (!cancellableStatuses.includes(app.status)) {
+      throw new ConflictException(
+        `Application ${applicationId} cannot be cancelled while it is ${app.status}`,
+      );
+    }
+
+    this.logger.log(`[${applicationId}] Cancelled by applicant ${citizenId}`);
+
+    await this.audit.record({
+      entityId: applicationId,
+      actorId: citizenId,
+      action: 'APPLICANT_CANCELLATION',
+      outcome: 'CANCELLED',
+    });
+
+    await this.updateStatus(applicationId, 'cancelled', app.status, citizenId);
   }
 
   private async reject(

@@ -339,4 +339,52 @@ describe("LandRegistry", function () {
       ).to.be.reverted;
     });
   });
+
+  // ── Component 2 Table A — Title Issuance and Transfer Outcomes ────────────
+  describe("Component 2 Table A — Title Issuance & Transfer Summary", function () {
+    it("records issued NFTs, completed registry transfers, and rejected direct owner transfers", async function () {
+      let titlesIssued = 0;
+      let registryTransfersCompleted = 0;
+      let ownerTransfersRejected = 0;
+
+      const mintedIds: bigint[] = [];
+      for (let i = 0; i < 3; i++) {
+        const id = await parseTitleMinted(
+          nft,
+          nft
+            .connect(registrar)
+            .mint(citizen.address, `ABUJA/2026/T/${i + 1}`, SPATIAL_HASH, METADATA_URI)
+        );
+        mintedIds.push(id);
+        titlesIssued += 1;
+      }
+
+      for (const id of mintedIds) {
+        try {
+          await nft
+            .connect(citizen)
+            .transferFrom(citizen.address, newOwner.address, id);
+        } catch {
+          ownerTransfersRejected += 1;
+        }
+      }
+
+      for (let i = 0; i < 2; i++) {
+        await registry
+          .connect(registrar)
+          .registryTransfer(mintedIds[i], citizen.address, newOwner.address);
+        registryTransfersCompleted += 1;
+      }
+
+      console.table([
+        { Event: "NFT land titles issued", Count: titlesIssued },
+        { Event: "Registry-controlled transfers completed", Count: registryTransfersCompleted },
+        { Event: "Owner-initiated transfer attempts rejected", Count: ownerTransfersRejected },
+      ]);
+
+      expect(titlesIssued).to.equal(3);
+      expect(registryTransfersCompleted).to.equal(2);
+      expect(ownerTransfersRejected).to.equal(3);
+    });
+  });
 });

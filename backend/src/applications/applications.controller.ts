@@ -139,4 +139,60 @@ export class ApplicationsController {
     });
     return { success: true, applicationId: id };
   }
+
+  @Post(':id/cancel')
+  @Roles(UserRole.CITIZEN)
+  @HttpCode(HttpStatus.OK)
+  async cancel(@Param('id') id: string, @Req() req: RequestWithUser) {
+    if (
+      typeof (
+        this.pipeline as {
+          cancelApplication?: (appId: string, citizenId: string) => Promise<void>;
+        }
+      ).cancelApplication === 'function'
+    ) {
+      await this.pipeline.cancelApplication(id, req.user.id);
+      return { success: true, applicationId: id, status: 'cancelled' };
+    }
+
+    const { data: existing, error: lookupError } = await this.supabase.raw
+      .from('applications')
+      .select('citizen_id, status')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (lookupError) {
+      throw new Error(`Failed to inspect application: ${lookupError.message}`);
+    }
+    if (!existing) {
+      throw new NotFoundException(`Application ${id} not found`);
+    }
+
+    const row = existing as { citizen_id: string; status: string };
+    if (row.citizen_id !== req.user.id) {
+      throw new ForbiddenException('You can only cancel your own applications');
+    }
+    if (!['pending', 'legal_pending', 'in_review'].includes(row.status)) {
+      throw new ConflictException(
+        `Application ${id} cannot be cancelled while it is ${row.status}`,
+      );
+    }
+
+    const { error: updateError } = await this.supabase.raw
+      .from('applications')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (updateError) {
+      throw new Error(`Failed to cancel application: ${updateError.message}`);
+    }
+
+    await this.audit.record({
+      entityId: id,
+      actorId: req.user.id,
+      action: 'APPLICANT_CANCELLATION',
+      outcome: 'CANCELLED',
+    });
+    return { success: true, applicationId: id, status: 'cancelled' };
+  }
 }

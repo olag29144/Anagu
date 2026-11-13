@@ -43,4 +43,23 @@ describe('LatencyInstrumentationService', () => {
       'Benchmark run count must be a positive integer',
     );
   });
+
+  it('instruments custom stage hooks when supplied and computes improvement percentage', async () => {
+    const called: string[] = [];
+    const timing = await service.timedRegistration({
+      gisVerify: async () => called.push('gis'),
+      oracleVerify: async () => called.push('oracle'),
+      executeSmartContract: async () => called.push('contract'),
+      issueNFT: async () => called.push('nft'),
+      publishMQTT: async () => called.push('mqtt'),
+    });
+
+    expect(called).toEqual(['gis', 'oracle', 'contract', 'nft', 'mqtt']);
+    expect(timing.T_total).toBeCloseTo(
+      timing.t_gis + timing.t_oracle + timing.t_contract + timing.t_nft + timing.t_sync,
+      4,
+    );
+    expect(service.computeImprovementPercentage(25, 100)).toBe(75);
+    expect(service.computeImprovementPercentage(100, 0)).toBe(0);
+  });
 });

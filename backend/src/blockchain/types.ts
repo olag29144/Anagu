@@ -16,3 +16,24 @@ export interface MintResult {
  *  1 — BreachOfStatutoryCondition
  */
 export type RevocationGround = 0 | 1;
+
+/**
+ * Result returned after a registry-controlled title transfer via LandRegistry.
+ */
+export interface TransferResult {
+  oldTokenId: bigint;
+  newTokenId: bigint;
+  from: string;
+  to: string;
+  txHash: string;
+}
+
+/**
+ * Detailed result returned when revoking a title with on-chain metrics.
+ */
+export interface RevocationResult {
+  txHash: string;
+  gasUsed: bigint;
+  confirmationTimeMs: number;
+}
+

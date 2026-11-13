@@ -74,4 +74,29 @@ export class AuditService {
       metadata: row.metadata,
     }));
   }
+
+  /**
+   * Retrieve all recorded statutory revocation events sorted newest first.
+   */
+  async getRevocations(): Promise<Array<AuditEntry & { createdAt: string }>> {
+    const { data, error } = await this.supabase.raw
+      .from('audit_trail')
+      .select('*')
+      .eq('action', 'STATUTORY_REVOCATION')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`Revocation audit read failed: ${error.message}`);
+    }
+
+    const rows = (data ?? []) as AuditTrailRow[];
+    return rows.map((row) => ({
+      entityId: row.entity_id,
+      ...(row.actor_id !== null && { actorId: row.actor_id }),
+      action: row.action,
+      outcome: row.outcome,
+      metadata: row.metadata,
+      createdAt: row.created_at,
+    }));
+  }
 }
