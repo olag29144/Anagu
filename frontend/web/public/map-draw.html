@@ -1,0 +1,157 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Anagu - Draw Parcel Boundary</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #020305; color: #F4F7FB; }
+        #map { width: 100vw; height: 100vh; }
+        .controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; padding: 0 10px; }
+        button { padding: 15px 25px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.2s; }
+        .btn-primary { background: #38BDF8; color: #020305; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-danger { background: #ef4444; color: white; }
+        button:active { transform: scale(0.95); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .info { position: fixed; top: 20px; left: 20px; right: 20px; background: rgba(10, 15, 22, 0.95); padding: 15px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.3); z-index: 1000; max-width: 400px; }
+        .counter { position: fixed; top: 100px; right: 20px; background: rgba(10, 15, 22, 0.95); padding: 10px 15px; border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.4); z-index: 1000; }
+        @media (max-width: 640px) {
+            .controls { bottom: 10px; }
+            button { padding: 12px 20px; font-size: 14px; }
+            .info { max-width: calc(100% - 40px); }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="info" id="info">
+        <div style="font-weight: bold; margin-bottom: 5px;">📍 Click "Start Drawing" to begin</div>
+        <div style="font-size: 12px; color: #94A3B8;">Tap on the map to mark your parcel boundary corners</div>
+    </div>
+
+    <div class="counter" id="counter" style="display: none;">
+        <span id="pointCount">0</span> points
+    </div>
+    
+    <div class="controls">
+        <button id="startBtn" class="btn-primary">🖊️ Start Drawing</button>
+        <button id="finishBtn" class="btn-success" style="display:none;" disabled>✓ Finish</button>
+        <button id="cancelBtn" class="btn-danger" style="display:none;">✗ Cancel</button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([9.0765, 7.3986], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        let isDrawing = false;
+        let points = [];
+        let polygon = null;
+        let markers = [];
+
+        const startBtn = document.getElementById('startBtn');
+        const finishBtn = document.getElementById('finishBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const info = document.getElementById('info');
+        const counter = document.getElementById('counter');
+        const pointCount = document.getElementById('pointCount');
+
+        function updateUI() {
+            pointCount.textContent = points.length;
+            finishBtn.disabled = points.length < 3;
+            
+            if (isDrawing) {
+                info.innerHTML = `<div style="font-weight: bold; margin-bottom: 5px;">🖊️ Drawing Mode Active</div><div style="font-size: 12px; color: #94A3B8;">Tap map to add points. Need ${Math.max(0, 3 - points.length)} more minimum.</div>`;
+            } else {
+                info.innerHTML = `<div style="font-weight: bold; margin-bottom: 5px;">📍 Click "Start Drawing" to begin</div><div style="font-size: 12px; color: #94A3B8;">Tap on the map to mark your parcel boundary corners</div>`;
+            }
+        }
+
+        startBtn.addEventListener('click', () => {
+            isDrawing = true;
+            points = [];
+            markers = [];
+            if (polygon) map.removeLayer(polygon);
+            
+            startBtn.style.display = 'none';
+            finishBtn.style.display = 'block';
+            cancelBtn.style.display = 'block';
+            counter.style.display = 'block';
+            updateUI();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            isDrawing = false;
+            points = [];
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+            if (polygon) map.removeLayer(polygon);
+            
+            startBtn.style.display = 'block';
+            finishBtn.style.display = 'none';
+            cancelBtn.style.display = 'none';
+            counter.style.display = 'none';
+            updateUI();
+        });
+
+        finishBtn.addEventListener('click', () => {
+            if (points.length < 3) {
+                alert('Need at least 3 points!');
+                return;
+            }
+
+            isDrawing = false;
+            const closedPoints = [...points, points[0]];
+            const wktCoords = closedPoints.map(p => `${p.lng} ${p.lat}`).join(', ');
+            const wkt = `SRID=4326;POLYGON((${wktCoords}))`;
+            
+            const coords = JSON.stringify(points.map(p => [p.lng, p.lat]));
+            
+            alert('Parcel boundary saved!\\n\\nCopy this WKT:\\n' + wkt);
+            console.log('WKT:', wkt);
+            console.log('Coordinates:', coords);
+            
+            // Store in localStorage to pass back to main app
+            localStorage.setItem('parcel_wkt', wkt);
+            localStorage.setItem('parcel_coords', coords);
+            
+            window.close();
+        });
+
+        map.on('click', (e) => {
+            if (!isDrawing) return;
+            
+            const point = e.latlng;
+            points.push(point);
+            
+            const marker = L.circleMarker(point, {
+                radius: 6,
+                fillColor: '#3b82f6',
+                color: '#fff',
+                weight: 2,
+                fillOpacity: 0.8
+            }).addTo(map);
+            markers.push(marker);
+            
+            if (polygon) map.removeLayer(polygon);
+            if (points.length > 1) {
+                polygon = L.polygon(points, {
+                    color: '#3b82f6',
+                    weight: 3,
+                    fillOpacity: 0.3
+                }).addTo(map);
+            }
+            
+            updateUI();
+        });
+
+        updateUI();
+    </script>
+</body>
+</html>
