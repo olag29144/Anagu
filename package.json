@@ -4,11 +4,10 @@
   "description": "Anagu Land Administration Framework — permissioned full-stack land title system",
   "private": true,
   "scripts": {
-    "dev": "npm run dev --prefix frontend/web",
-    "build": "npm run build --prefix frontend/web",
-    "start": "npm run start --prefix frontend/web",
-    "lint": "npm run lint --prefix frontend/web",
-    "postinstall": "npm install --prefix frontend/web"
+    "dev": "NEXT_IGNORE_INCORRECT_LOCKFILE=1 npm run dev --workspace=@anagu/web",
+    "build": "NEXT_IGNORE_INCORRECT_LOCKFILE=1 npm run build --workspace=@anagu/web",
+    "start": "npm run start --workspace=@anagu/web",
+    "lint": "npm run lint --workspace=@anagu/web"
   },
   "workspaces": [
     "frontend/web"
@@ -18,11 +17,7 @@
     "npm": ">=10.0.0"
   },
   "devDependencies": {
-    "@nomicfoundation/edr-win32-x64-msvc": "^0.12.0-next.23",
-    "@nomicfoundation/hardhat-ethers": "^3.1.3",
-    "@nomicfoundation/hardhat-ignition-ethers": "^0.15.17",
     "lodash": "^4.17.21",
-    "node-emoji": "^2.1.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   },
