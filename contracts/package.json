@@ -23,6 +23,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.0.0",
     "chai": "^4.5.0",
+    "dotenv": "^16.4.5",
     "hardhat": "^2.22.0",
     "hardhat-gas-reporter": "^1.0.10",
     "io-ts": "^2.2.22",

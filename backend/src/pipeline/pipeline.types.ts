@@ -18,6 +18,7 @@ export type ApplicationStatus =
   | 'in_review'
   | 'approved'
   | 'rejected'
+  | 'cancelled'
   | 'completed';
 
 /**

@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
+import { AuthModule } from '../auth/auth.module';
 import { MqttModule } from '../mqtt/mqtt.module';
 import { OracleService } from './oracle.service';
+import { OracleController } from './oracle.controller';
 import { InstitutionalSourceClient } from './institutional-source.client';
 import { CommunitySourceClient } from './community-source.client';
 
@@ -10,8 +12,9 @@ import { CommunitySourceClient } from './community-source.client';
  * Requirements 5.1–5.8
  */
 @Module({
-  imports: [AuditModule, MqttModule],
+  imports: [AuditModule, AuthModule, MqttModule],
   providers: [OracleService, InstitutionalSourceClient, CommunitySourceClient],
+  controllers: [OracleController],
   exports: [OracleService, InstitutionalSourceClient, CommunitySourceClient],
 })
 export class OracleModule {}

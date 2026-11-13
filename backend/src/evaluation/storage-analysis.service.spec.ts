@@ -46,6 +46,7 @@ describe('StorageAnalysisService', () => {
           S_time: 0,
           S_rev: 8,
           S_sig: 256,
+          S_merkle: 0,
         },
       });
     });
@@ -74,6 +75,7 @@ describe('StorageAnalysisService', () => {
           S_time: 1,
           S_rev: 1,
           S_sig: 1,
+          S_merkle: 1,
         }),
       ).toBe(1);
     });

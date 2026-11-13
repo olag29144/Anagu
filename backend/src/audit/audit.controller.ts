@@ -9,6 +9,12 @@ import { AuditService } from './audit.service';
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
+  @Get('revocations')
+  @Roles(UserRole.REGISTRAR, UserRole.LAND_ADMIN, UserRole.GOVERNOR)
+  async getRevocations() {
+    return this.auditService.getRevocations();
+  }
+
   @Get(':entityId')
   @Roles(UserRole.REGISTRAR, UserRole.LAND_ADMIN, UserRole.GOVERNOR)
   async getTrail(@Param('entityId') entityId: string) {
