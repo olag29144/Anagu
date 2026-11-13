@@ -7,7 +7,8 @@
     "dev": "NEXT_IGNORE_INCORRECT_LOCKFILE=1 npm run dev --workspace=@anagu/web",
     "build": "NEXT_IGNORE_INCORRECT_LOCKFILE=1 npm run build --workspace=@anagu/web",
     "start": "npm run start --workspace=@anagu/web",
-    "lint": "npm run lint --workspace=@anagu/web"
+    "lint": "npm run lint --workspace=@anagu/web",
+    "test:mqtt": "npm --prefix backend run test:mqtt"
   },
   "workspaces": [
     "frontend/web"

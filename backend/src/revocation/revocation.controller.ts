@@ -23,21 +23,24 @@ class RevokeDto {
   ground!: RevocationGround;
 }
 
+class TransferDto {
+  toWallet!: string;
+  newOwnerId?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Controller
 // ---------------------------------------------------------------------------
 
 /**
- * REST controller for statutory land title revocation.
+ * REST controller for statutory land title revocation & registry-controlled transfers.
  *
- * Endpoint: `POST /titles/:tokenId/revoke`
- * Required role: `governor` (Requirement 4.7)
- *
- * References: Requirements 4.7, 4.8, 4.9
+ * Endpoints:
+ *   `POST /titles/:tokenId/revoke`   — Required role: `governor` (Requirement 4.7)
+ *   `POST /titles/:tokenId/transfer` — Required role: `registrar` (Requirement 3.5)
  */
 @Controller('titles')
 @UseGuards(SupabaseAuthGuard, RolesGuard)
-@Roles(UserRole.GOVERNOR)
 export class RevocationController {
   constructor(
     private readonly revocationService: RevocationService,
@@ -53,6 +56,7 @@ export class RevocationController {
    * @returns 200 OK with `{ success, tokenId, ground, revokedAt }`.
    */
   @Post(':tokenId/revoke')
+  @Roles(UserRole.GOVERNOR)
   @HttpCode(HttpStatus.OK)
   async revoke(
     @Param('tokenId') tokenId: string,
@@ -80,6 +84,38 @@ export class RevocationController {
       tokenId,
       ground: dto.ground,
       revokedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Registry-controlled ownership transfer via LandRegistry contract.
+   */
+  @Post(':tokenId/transfer')
+  @Roles(UserRole.REGISTRAR)
+  @HttpCode(HttpStatus.OK)
+  async transfer(
+    @Param('tokenId') tokenId: string,
+    @Body() dto: TransferDto,
+    @Req() req: RequestWithUser,
+  ): Promise<{
+    success: boolean;
+    oldTokenId: string;
+    newTokenId: string;
+    from: string;
+    to: string;
+    txHash: string;
+  }> {
+    const registrarId: string = req.user?.id ?? 'system';
+    const result = await this.revocationService.transferTitle(
+      tokenId,
+      dto.toWallet,
+      registrarId,
+      dto.newOwnerId,
+    );
+
+    return {
+      success: true,
+      ...result,
     };
   }
 }

@@ -2,7 +2,8 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ethers } from 'ethers';
 import * as path from 'path';
-import { MintResult, RevocationGround } from './types';
+import { performance } from 'perf_hooks';
+import { MintResult, RevocationGround, RevocationResult, TransferResult } from './types';
 
 /**
  * BlockchainService — ethers v6 integration with the Hyperledger Besu QBFT node.
@@ -22,6 +23,7 @@ export class BlockchainService implements OnModuleInit {
   private provider!: ethers.JsonRpcProvider;
   private registrarWallet!: ethers.Wallet;
   private landTitleNFT!: ethers.Contract;
+  private landRegistry?: ethers.Contract;
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -64,6 +66,19 @@ export class BlockchainService implements OnModuleInit {
     this.logger.log(
       `BlockchainService connected to LandTitleNFT at ${contractAddress}`,
     );
+
+    const registryAddress = this.configService.get<string>('LAND_REGISTRY_ADDRESS');
+    const registryAbi = this.loadRegistryAbi();
+    if (registryAddress && registryAbi) {
+      this.landRegistry = new ethers.Contract(
+        registryAddress,
+        registryAbi,
+        this.registrarWallet,
+      );
+      this.logger.log(
+        `BlockchainService connected to LandRegistry at ${registryAddress}`,
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -147,6 +162,22 @@ export class BlockchainService implements OnModuleInit {
     ground: RevocationGround,
     governorPrivateKey: string,
   ): Promise<string> {
+    const result = await this.revokeTitleWithMetrics(
+      tokenId,
+      ground,
+      governorPrivateKey,
+    );
+    return result.txHash;
+  }
+
+  /**
+   * Statutorily revoke a land title and return transaction hash, gas used, and confirmation latency (ms).
+   */
+  async revokeTitleWithMetrics(
+    tokenId: bigint,
+    ground: RevocationGround,
+    governorPrivateKey: string,
+  ): Promise<RevocationResult> {
     this.assertContractReady();
 
     const governorWallet = new ethers.Wallet(
@@ -158,6 +189,7 @@ export class BlockchainService implements OnModuleInit {
       governorWallet,
     ) as ethers.Contract;
 
+    const startedAt = performance.now();
     const tx: ethers.ContractTransactionResponse =
       await (governorContract.revoke(
         tokenId,
@@ -165,11 +197,66 @@ export class BlockchainService implements OnModuleInit {
       ) as Promise<ethers.ContractTransactionResponse>);
 
     const receipt = await tx.wait();
+    const confirmationTimeMs = performance.now() - startedAt;
     if (!receipt) {
       throw new Error('revokeTitle: transaction receipt was null');
     }
 
-    return receipt.hash;
+    return {
+      txHash: receipt.hash,
+      gasUsed: receipt.gasUsed,
+      confirmationTimeMs: Number(confirmationTimeMs.toFixed(3)),
+    };
+  }
+
+  /**
+   * Perform a registry-controlled transfer through LandRegistry.registryTransfer().
+   */
+  async registryTransfer(
+    tokenId: bigint,
+    from: string,
+    to: string,
+  ): Promise<TransferResult> {
+    this.assertContractReady();
+    if (!this.landRegistry) {
+      throw new Error(
+        'BlockchainService: LandRegistry contract is not initialised. ' +
+          'Ensure the contracts are compiled and LAND_REGISTRY_ADDRESS is set.',
+      );
+    }
+
+    const tx: ethers.ContractTransactionResponse =
+      await (this.landRegistry.registryTransfer(
+        tokenId,
+        from,
+        to,
+      ) as Promise<ethers.ContractTransactionResponse>);
+
+    const receipt = await tx.wait();
+    if (!receipt) {
+      throw new Error('registryTransfer: transaction receipt was null');
+    }
+
+    const newTokenId = this.parseRegistryTransferEvent(receipt);
+    const txHashBytes32 = ethers.zeroPadValue(
+      ethers.toBeArray(BigInt(receipt.hash)),
+      32,
+    );
+
+    const setHashTx: ethers.ContractTransactionResponse =
+      await (this.landTitleNFT.setMintTxHash(
+        newTokenId,
+        txHashBytes32,
+      ) as Promise<ethers.ContractTransactionResponse>);
+    await setHashTx.wait();
+
+    return {
+      oldTokenId: tokenId,
+      newTokenId,
+      from,
+      to,
+      txHash: receipt.hash,
+    };
   }
 
   /**
@@ -265,6 +352,21 @@ export class BlockchainService implements OnModuleInit {
     }
   }
 
+  private loadRegistryAbi(): ethers.InterfaceAbi | null {
+    const artifactsPath = path.resolve(
+      __dirname,
+      '../../../contracts/artifacts/contracts/LandRegistry.sol/LandRegistry.json',
+    );
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const artifact = require(artifactsPath) as { abi: ethers.InterfaceAbi };
+      return artifact.abi;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Parse the `TitleMinted` event from a transaction receipt to extract `tokenId`.
    * Throws if the event is not found (indicates a contract mismatch or ABI issue).
@@ -288,6 +390,32 @@ export class BlockchainService implements OnModuleInit {
 
     throw new Error(
       'mintTitle: TitleMinted event not found in transaction receipt logs',
+    );
+  }
+
+  private parseRegistryTransferEvent(
+    receipt: ethers.TransactionReceipt,
+  ): bigint {
+    if (!this.landRegistry) {
+      throw new Error('LandRegistry contract is not initialised');
+    }
+
+    for (const log of receipt.logs) {
+      try {
+        const parsed = this.landRegistry.interface.parseLog({
+          topics: [...log.topics],
+          data: log.data,
+        });
+        if (parsed?.name === 'RegistryTransfer') {
+          return parsed.args.tokenId as bigint;
+        }
+      } catch {
+        // Skip unparseable logs from other contracts
+      }
+    }
+
+    throw new Error(
+      'registryTransfer: RegistryTransfer event not found in transaction receipt logs',
     );
   }
 

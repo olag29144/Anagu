@@ -11,6 +11,7 @@
  */
 
 import { expect } from "chai";
+import { performance } from "perf_hooks";
 import { ethers } from "hardhat";
 import { LandTitleNFT } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
@@ -618,11 +619,15 @@ describe("LandTitleNFT", function () {
       }
     });
 
-    it("measures gas cost of revoke() call", async function () {
+    it("measures gas cost and confirmation time of revoke() call (Table B)", async function () {
+      const startedAt = performance.now();
       const tx = await nft.connect(governor).revoke(tokenId, 0);
       const receipt = await tx.wait();
+      const confirmationTimeMs = performance.now() - startedAt;
       const gasUsed = receipt!.gasUsed;
-      console.log(`    ⛽ revoke() gas used: ${gasUsed.toString()}`);
+      console.log(
+        `    ⛽ revoke() gas used: ${gasUsed.toString()} | ⏱️ confirmation time: ${confirmationTimeMs.toFixed(3)} ms`
+      );
       expect(gasUsed).to.be.gt(
         0n,
         "gas used must be non-zero"
@@ -632,6 +637,7 @@ describe("LandTitleNFT", function () {
         200_000n,
         "revoke() should not exceed 200k gas"
       );
+      expect(confirmationTimeMs).to.be.gte(0);
     });
   });
 

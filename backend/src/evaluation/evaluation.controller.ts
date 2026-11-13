@@ -80,7 +80,11 @@ export class EvaluationController {
       this.latency.runLatencyBenchmark(30),
       Promise.resolve(this.latency.runBaselineBenchmark(30)),
     ]);
-    return { proposed, baseline };
+    const improvementPercentage = this.latency.computeImprovementPercentage(
+      proposed.stages.T_total.mean,
+      baseline.stages.T_total.mean,
+    );
+    return { proposed, baseline, improvementPercentage };
   }
 
   /**

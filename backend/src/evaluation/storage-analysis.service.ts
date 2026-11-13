@@ -9,6 +9,7 @@ export interface StorageFields {
   S_time: number;
   S_rev: number;
   S_sig: number;
+  S_merkle: number;
 }
 
 export interface StorageReport {
@@ -72,6 +73,7 @@ export class StorageAnalysisService {
       S_time: 0,
       S_rev: 8,
       S_sig: 256,
+      S_merkle: 0,
     };
 
     return { fields, owner, revoked, titleMetadataBytes };
