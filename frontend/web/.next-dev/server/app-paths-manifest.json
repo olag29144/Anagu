@@ -3,5 +3,10 @@
   "/explore/page": "app/explore/page.js",
   "/register/page": "app/register/page.js",
   "/admin/page": "app/admin/page.js",
-  "/api/maps-config/route": "app/api/maps-config/route.js"
+  "/citizen/page": "app/citizen/page.js",
+  "/registrar/page": "app/registrar/page.js",
+  "/governor/page": "app/governor/page.js",
+  "/api/maps-config/route": "app/api/maps-config/route.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/audit/[entityId]/page": "app/audit/[entityId]/page.js"
 }
