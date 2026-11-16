@@ -18,6 +18,13 @@ import {
 } from '@/lib/land-store';
 import { formatPlotEquivalents, type LatLngPoint } from '@/lib/gis-utils';
 import {
+  subscribeWalletDiscovery,
+  getSnapshotDetectedWallets,
+  connectWalletProvider,
+  mapWalletError,
+  type DetectedWalletProvider,
+} from '@/lib/web3-wallet';
+import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
@@ -28,10 +35,12 @@ import {
   Image as ImageIcon,
   Layers,
   ListChecks,
+  Loader2,
   MapPin,
   Trash2,
   Upload,
   User,
+  Wallet,
 } from 'lucide-react';
 
 const NIGERIAN_STATES = [
@@ -120,10 +129,13 @@ export default function RegisterLandPage() {
   const [viewMode, setViewMode] = useState<FormViewMode>('guided');
   const [activeStep, setActiveStep] = useState<RegistrationStep>(1);
 
-  // Owner & Contact Details (Email is optional so anyone with a phone can register)
+  // Owner & Contact Details (Email & ETH Wallet are optional so anyone with a phone can register)
   const [ownerName, setOwnerName] = useState('');
   const [ownerPhone, setOwnerPhone] = useState('');
   const [ownerEmail, setOwnerEmail] = useState('');
+  const [ownerWalletAddress, setOwnerWalletAddress] = useState('');
+  const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
+  const [connectingWallet, setConnectingWallet] = useState(false);
 
   // Land Details
   const [title, setTitle] = useState('');
@@ -158,6 +170,12 @@ export default function RegisterLandPage() {
 
   useEffect(() => {
     setExistingParcels(getLandListings());
+    const unsubscribe = subscribeWalletDiscovery((wallets) => {
+      setDetectedWallets(wallets);
+    });
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   const handleGisChange = useCallback((payload: GisMeasurementPayload) => {
@@ -245,6 +263,31 @@ export default function RegisterLandPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const isValidEthAddress = (addr: string) => /^0x[a-fA-F0-9]{40}$/.test(addr.trim());
+
+  const handleAutoFillWallet = async () => {
+    setError(null);
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    const wallets =
+      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+    if (wallets.length === 0) {
+      setError(
+        'No browser Web3 wallet detected. Paste your 0x... Ethereum wallet address manually or open this page in your wallet browser.',
+      );
+      return;
+    }
+
+    setConnectingWallet(true);
+    try {
+      const connected = await connectWalletProvider(wallets[0]);
+      setOwnerWalletAddress(connected.address);
+    } catch (err) {
+      setError(mapWalletError(err));
+    } finally {
+      setConnectingWallet(false);
+    }
+  };
+
   const handleNextFromStep1 = () => {
     if (!ownerName.trim()) {
       setError('Please enter your full name or company name.');
@@ -256,6 +299,12 @@ export default function RegisterLandPage() {
     }
     if (ownerEmail.trim() && !ownerEmail.includes('@')) {
       setError('Please enter a valid email address or leave the email box empty.');
+      return;
+    }
+    if (ownerWalletAddress.trim() && !isValidEthAddress(ownerWalletAddress)) {
+      setError(
+        'Please enter a valid 42-character ETH wallet address starting with 0x, or leave it blank.',
+      );
       return;
     }
     goToStep(2);
@@ -302,6 +351,13 @@ export default function RegisterLandPage() {
       if (viewMode === 'guided') setActiveStep(1);
       return;
     }
+    if (ownerWalletAddress.trim() && !isValidEthAddress(ownerWalletAddress)) {
+      setError(
+        'Please enter a valid 42-character ETH wallet address starting with 0x, or leave it blank.',
+      );
+      if (viewMode === 'guided') setActiveStep(1);
+      return;
+    }
     if (!title.trim()) {
       setError('Please enter a title or name for the land.');
       if (viewMode === 'guided') setActiveStep(3);
@@ -332,6 +388,7 @@ export default function RegisterLandPage() {
       ownerName: ownerName.trim(),
       ownerEmail: ownerEmail.trim() || 'Not provided',
       ownerPhone: ownerPhone.trim(),
+      ownerWalletAddress: ownerWalletAddress.trim() || undefined,
       state,
       location: location.trim(),
       areaSqm: parsedArea,
@@ -361,6 +418,7 @@ export default function RegisterLandPage() {
   const handleReset = () => {
     setRegisteredLand(null);
     setActiveStep(1);
+    setOwnerWalletAddress('');
     setTitle('');
     setLocation('');
     setAreaSqm('');
@@ -478,8 +536,15 @@ export default function RegisterLandPage() {
                 has been submitted to the registry.
               </p>
 
-              <div className="my-6 inline-block rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] px-4 py-2 font-mono text-xs text-[#38BDF8]">
-                Parcel Reference: {registeredLand.parcelRef}
+              <div className="my-6 flex flex-col items-center gap-2">
+                <div className="inline-block rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] px-4 py-2 font-mono text-xs text-[#38BDF8]">
+                  Parcel Reference: {registeredLand.parcelRef}
+                </div>
+                {registeredLand.ownerWalletAddress && (
+                  <div className="inline-block rounded-lg bg-[#05080D] border border-emerald-500/30 px-4 py-1.5 font-mono text-xs text-emerald-400">
+                    ETH Wallet Linked: {registeredLand.ownerWalletAddress}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center justify-center gap-3">
@@ -618,6 +683,45 @@ export default function RegisterLandPage() {
                         className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                       />
                     </div>
+                  </div>
+
+                  {/* ETH Wallet Address Field */}
+                  <div className="pt-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                      <label htmlFor="ownerWalletAddress" className="text-xs text-[#94A3B8] flex items-center gap-1.5">
+                        <Wallet className="h-3.5 w-3.5 text-[#38BDF8]" />
+                        <span>ETH Wallet Address (Optional — for on-chain title &amp; Web3 payments)</span>
+                      </label>
+                      <button
+                        type="button"
+                        disabled={connectingWallet}
+                        onClick={() => void handleAutoFillWallet()}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#38BDF8]/10 border border-[#38BDF8]/35 text-[11px] font-medium text-[#67E8F9] hover:bg-[#38BDF8]/20 disabled:opacity-60 transition-colors"
+                      >
+                        {connectingWallet ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Wallet className="h-3 w-3" />
+                        )}
+                        <span>
+                          {connectingWallet ? 'Connecting Wallet…' : 'Connect Wallet to Auto-fill'}
+                        </span>
+                      </button>
+                    </div>
+                    <input
+                      id="ownerWalletAddress"
+                      type="text"
+                      value={ownerWalletAddress}
+                      onChange={(e) => setOwnerWalletAddress(e.target.value)}
+                      placeholder="0x71C83812a19f20108A456789b910123456789012"
+                      spellCheck={false}
+                      className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                    />
+                    {ownerWalletAddress.trim() && isValidEthAddress(ownerWalletAddress) && (
+                      <p className="mt-1 text-[11px] font-mono text-emerald-400">
+                        Valid Ethereum (ERC-721 / Web3) wallet address
+                      </p>
+                    )}
                   </div>
 
                   {viewMode === 'guided' && (
@@ -1051,6 +1155,11 @@ export default function RegisterLandPage() {
                         <p className="font-medium text-[#F4F7FB] mt-0.5 truncate">
                           {ownerName.trim() || '—'} · {ownerPhone.trim() || '—'}
                         </p>
+                        {ownerWalletAddress.trim() && (
+                          <p className="font-mono text-[11px] text-[#38BDF8] mt-0.5 truncate">
+                            ETH: {ownerWalletAddress.trim()}
+                          </p>
+                        )}
                       </div>
                       <div>
                         <p className="text-[#64748B]">Land &amp; Location</p>

@@ -11,7 +11,24 @@ import {
   type LandListing,
   type LandCategory,
   type LandPurchaseOrder,
+  type PurchasePaymentMethod,
 } from '@/lib/land-store';
+import {
+  subscribeWalletDiscovery,
+  getSnapshotDetectedWallets,
+  connectWalletProvider,
+  signLandPurchaseAuthorization,
+  sendLandPurchaseTransaction,
+  getMobileWalletDeepLinks,
+  triggerDeviceEthereumWalletIntent,
+  isMobileDevice,
+  isAndroidDevice,
+  formatShortAddress,
+  getChainName,
+  mapWalletError,
+  type DetectedWalletProvider,
+  type ConnectedWalletState,
+} from '@/lib/web3-wallet';
 import { ExploreParcelsMap } from '@/components/gis/ExploreParcelsMap';
 import { ParcelMiniMap } from '@/components/gis/ParcelMiniMap';
 import {
@@ -27,6 +44,12 @@ import {
   SlidersHorizontal,
   LayoutGrid,
   Map as MapIcon,
+  Wallet,
+  Smartphone,
+  ExternalLink,
+  RefreshCw,
+  Loader2,
+  ShieldCheck,
 } from 'lucide-react';
 
 const CATEGORIES: Array<'All' | LandCategory> = [
@@ -59,17 +82,102 @@ export default function ExploreLandPage() {
   const [buyerName, setBuyerName] = useState('');
   const [buyerEmail, setBuyerEmail] = useState('');
   const [buyerPhone, setBuyerPhone] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<LandPurchaseOrder['paymentMethod']>(
-    'Bank Escrow Transfer',
+  const [paymentMethod, setPaymentMethod] = useState<PurchasePaymentMethod>(
+    'Web3 Wallet Signature (EIP-191)',
   );
   const [buyerNotes, setBuyerNotes] = useState('');
   const [buyError, setBuyError] = useState<string | null>(null);
+  const [submittingPurchase, setSubmittingPurchase] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<LandPurchaseOrder | null>(null);
 
+  // Web3 Wallet state
+  const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
+  const [activeProvider, setActiveProvider] = useState<DetectedWalletProvider | null>(null);
+  const [connectedWallet, setConnectedWallet] = useState<ConnectedWalletState | null>(null);
+  const [walletConnecting, setWalletConnecting] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [showMobileLinks, setShowMobileLinks] = useState(false);
+
+  const connectWithWallet = async (wallet: DetectedWalletProvider) => {
+    setWalletConnecting(true);
+    setWalletError(null);
+    setActiveProvider(wallet);
+    try {
+      const connected = await connectWalletProvider(wallet);
+      setConnectedWallet(connected);
+      setPaymentMethod((prev) =>
+        prev === 'Web3 Wallet On-Chain Escrow'
+          ? 'Web3 Wallet On-Chain Escrow'
+          : 'Web3 Wallet Signature (EIP-191)',
+      );
+    } catch (err) {
+      setWalletError(mapWalletError(err));
+    } finally {
+      setWalletConnecting(false);
+    }
+  };
+
   useEffect(() => {
-    setListings(getLandListings());
+    const initialListings = getLandListings();
+    setListings(initialListings);
     setLoaded(true);
+    setIsMobile(isMobileDevice());
+
+    const unsubscribe = subscribeWalletDiscovery((wallets) => {
+      setDetectedWallets(wallets);
+    });
+
+    // If opened from a mobile wallet deep link (?buyParcel=...), auto-open buy modal and trigger wallet
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const buyParcelId = params.get('buyParcel');
+      if (buyParcelId) {
+        const matched = initialListings.find((item) => item.id === buyParcelId);
+        if (matched && matched.saleStatus !== 'sold') {
+          setBuyParcel(matched);
+          const snapshotWallets = getSnapshotDetectedWallets();
+          if (snapshotWallets.length > 0) {
+            void connectWithWallet(snapshotWallets[0]);
+          }
+        }
+      }
+    }
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
+
+  // Keep connected wallet synced with account or network switches in PC/mobile wallet
+  useEffect(() => {
+    const provider = activeProvider?.provider;
+    if (!provider?.on || !provider?.removeListener) return;
+
+    const handleAccountsChanged = (accountsArg: unknown) => {
+      const accounts = Array.isArray(accountsArg) ? (accountsArg as string[]) : [];
+      if (accounts.length === 0) {
+        setConnectedWallet(null);
+      } else {
+        setConnectedWallet((prev) => (prev ? { ...prev, address: accounts[0] } : prev));
+      }
+    };
+
+    const handleChainChanged = (chainIdArg: unknown) => {
+      const chainId = typeof chainIdArg === 'string' ? chainIdArg : '0x1';
+      setConnectedWallet((prev) =>
+        prev ? { ...prev, chainId, chainName: getChainName(chainId) } : prev,
+      );
+    };
+
+    provider.on('accountsChanged', handleAccountsChanged);
+    provider.on('chainChanged', handleChainChanged);
+
+    return () => {
+      provider.removeListener?.('accountsChanged', handleAccountsChanged);
+      provider.removeListener?.('chainChanged', handleChainChanged);
+    };
+  }, [activeProvider]);
 
   const forSaleListings = useMemo(() => {
     return listings.filter(
@@ -111,10 +219,49 @@ export default function ExploreLandPage() {
     setInspectParcel(null);
     setBuyParcel(parcel);
     setBuyError(null);
+    setWalletError(null);
     setCompletedOrder(null);
+
+    // Immediately trigger any installed Web3 wallet on PC or mobile on Buy Land click
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    const availableWallets =
+      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+
+    if (availableWallets.length > 0) {
+      setShowMobileLinks(false);
+      const targetWallet = activeProvider
+        ? availableWallets.find((w) => w.id === activeProvider.id) ?? availableWallets[0]
+        : availableWallets[0];
+      void connectWithWallet(targetWallet);
+      return;
+    }
+
+    // No injected provider (e.g. mobile Chrome/Safari or desktop without wallet extension)
+    const mobile = isMobileDevice();
+    setIsMobile(mobile);
+    setShowMobileLinks(mobile);
+
+    if (mobile && isAndroidDevice()) {
+      // Trigger Android OS Web3 wallet chooser intent immediately on click
+      triggerDeviceEthereumWalletIntent();
+    }
   };
 
-  const handlePurchaseSubmit = (e: FormEvent) => {
+  const handleRefreshWallets = () => {
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    const wallets = detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+    if (wallets.length > 0) {
+      void connectWithWallet(wallets[0]);
+    } else {
+      setWalletError(
+        isMobile
+          ? 'No in-app wallet browser detected. Tap your mobile wallet app below to open and connect.'
+          : 'No browser Web3 wallet detected. Install or unlock MetaMask, Rabby, Coinbase Wallet, Trust Wallet, or Phantom.',
+      );
+    }
+  };
+
+  const handlePurchaseSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!buyParcel) return;
     setBuyError(null);
@@ -132,6 +279,61 @@ export default function ExploreLandPage() {
       return;
     }
 
+    const isWeb3Method =
+      paymentMethod === 'Web3 Wallet Signature (EIP-191)' ||
+      paymentMethod === 'Web3 Wallet On-Chain Escrow';
+
+    let walletSignature: string | undefined;
+    let walletTxHash: string | undefined;
+    let activeConnected = connectedWallet;
+    let providerToUse = activeProvider?.provider;
+
+    if (isWeb3Method) {
+      setSubmittingPurchase(true);
+      try {
+        if (!activeConnected || !providerToUse) {
+          const wallets =
+            detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+          if (wallets.length === 0) {
+            setSubmittingPurchase(false);
+            setBuyError(
+              'Please connect a Web3 wallet above (or open in your mobile wallet app), or switch Settlement Method to Bank Escrow Transfer.',
+            );
+            return;
+          }
+          providerToUse = wallets[0].provider;
+          setActiveProvider(wallets[0]);
+          activeConnected = await connectWalletProvider(wallets[0]);
+          setConnectedWallet(activeConnected);
+        }
+
+        if (paymentMethod === 'Web3 Wallet Signature (EIP-191)') {
+          walletSignature = await signLandPurchaseAuthorization(providerToUse, {
+            address: activeConnected.address,
+            parcelRef: buyParcel.parcelRef,
+            landTitle: buyParcel.title,
+            location: `${buyParcel.location}, ${buyParcel.state}`,
+            areaSqm: buyParcel.areaSqm,
+            priceNgn: buyParcel.priceNgn,
+            buyerName: buyerName.trim(),
+            sellerWalletAddress: buyParcel.ownerWalletAddress,
+          });
+        } else {
+          walletTxHash = await sendLandPurchaseTransaction(providerToUse, {
+            address: activeConnected.address,
+            parcelRef: buyParcel.parcelRef,
+            priceNgn: buyParcel.priceNgn,
+            sellerWalletAddress: buyParcel.ownerWalletAddress,
+          });
+        }
+      } catch (err) {
+        setSubmittingPurchase(false);
+        setBuyError(mapWalletError(err));
+        return;
+      }
+      setSubmittingPurchase(false);
+    }
+
     const order = createPurchaseOrder({
       landId: buyParcel.id,
       landTitle: buyParcel.title,
@@ -141,6 +343,11 @@ export default function ExploreLandPage() {
       buyerEmail: buyerEmail.trim(),
       buyerPhone: buyerPhone.trim(),
       paymentMethod,
+      walletAddress: activeConnected?.address,
+      walletName: activeConnected?.walletName,
+      walletChainName: activeConnected?.chainName,
+      walletSignature,
+      walletTxHash,
       notes: buyerNotes.trim(),
     });
 
@@ -601,7 +808,14 @@ export default function ExploreLandPage() {
 
               <div className="pt-3 border-t border-[rgba(91,133,167,0.16)] flex items-center justify-between gap-3">
                 <div className="text-xs text-[#94A3B8]">
-                  Seller: <span className="text-[#F4F7FB] font-medium">{inspectParcel.ownerName}</span>
+                  <span>
+                    Seller: <span className="text-[#F4F7FB] font-medium">{inspectParcel.ownerName}</span>
+                  </span>
+                  {inspectParcel.ownerWalletAddress && (
+                    <p className="font-mono text-[11px] text-[#38BDF8] mt-0.5">
+                      ETH: {formatShortAddress(inspectParcel.ownerWalletAddress)}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -634,7 +848,7 @@ export default function ExploreLandPage() {
           aria-modal="true"
           aria-label={`Purchase ${buyParcel.title}`}
         >
-          <div className="w-full max-w-lg rounded-[12px] bg-[#0A0F16] border border-[rgba(91,133,167,0.30)] p-6 shadow-2xl">
+          <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-[12px] bg-[#0A0F16] border border-[rgba(91,133,167,0.30)] p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4 pb-4 border-b border-[rgba(91,133,167,0.16)]">
               <div>
                 <p className="text-xs font-mono text-[#38BDF8]">{buyParcel.parcelRef}</p>
@@ -678,6 +892,35 @@ export default function ExploreLandPage() {
                   <p className="text-[#94A3B8]">
                     Method: <span className="text-[#F4F7FB]">{completedOrder.paymentMethod}</span>
                   </p>
+                  {completedOrder.walletAddress && (
+                    <p className="text-[#94A3B8]">
+                      Web3 Wallet:{' '}
+                      <span className="font-mono text-[#38BDF8]">
+                        {completedOrder.walletName} ({formatShortAddress(completedOrder.walletAddress)})
+                      </span>
+                    </p>
+                  )}
+                  {completedOrder.walletChainName && (
+                    <p className="text-[#94A3B8]">
+                      Network: <span className="font-mono text-[#F4F7FB]">{completedOrder.walletChainName}</span>
+                    </p>
+                  )}
+                  {completedOrder.walletSignature && (
+                    <p className="text-[#94A3B8] break-all">
+                      Signature Proof:{' '}
+                      <span className="font-mono text-emerald-400">
+                        {completedOrder.walletSignature.slice(0, 26)}…
+                      </span>
+                    </p>
+                  )}
+                  {completedOrder.walletTxHash && (
+                    <p className="text-[#94A3B8] break-all">
+                      Tx Hash:{' '}
+                      <span className="font-mono text-emerald-400">
+                        {completedOrder.walletTxHash.slice(0, 26)}…
+                      </span>
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -699,6 +942,171 @@ export default function ExploreLandPage() {
                   <span className="font-mono font-bold text-[#38BDF8] tabular-nums">
                     {formatNaira(buyParcel.priceNgn)}
                   </span>
+                </div>
+
+                {/* Web3 Wallet Connection & Trigger Panel */}
+                <div className="rounded-lg bg-[#05080D] border border-[rgba(56,189,248,0.28)] p-3.5 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Wallet className="h-4 w-4 text-[#38BDF8]" />
+                      <span className="text-xs font-semibold text-[#F4F7FB]">
+                        Web3 Wallet Connection
+                      </span>
+                    </div>
+                    {connectedWallet ? (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-emerald-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        Connected
+                      </span>
+                    ) : walletConnecting ? (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[#38BDF8]">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Waiting for Wallet…
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-mono text-amber-300">
+                        Wallet Prompt
+                      </span>
+                    )}
+                  </div>
+
+                  {connectedWallet ? (
+                    <div className="rounded-md bg-[#0A0F16] border border-emerald-500/30 p-2.5 flex items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {connectedWallet.walletIcon ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={connectedWallet.walletIcon}
+                            alt={connectedWallet.walletName}
+                            className="h-6 w-6 rounded-md shrink-0"
+                          />
+                        ) : (
+                          <div className="h-6 w-6 rounded-md bg-[#38BDF8]/15 text-[#38BDF8] flex items-center justify-center shrink-0">
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-medium text-[#F4F7FB] truncate">
+                            {connectedWallet.walletName} ·{' '}
+                            <span className="font-mono text-[#67E8F9]">
+                              {formatShortAddress(connectedWallet.address)}
+                            </span>
+                          </p>
+                          <p className="text-[11px] font-mono text-[#94A3B8] truncate">
+                            {connectedWallet.chainName} · {connectedWallet.balanceEth} ETH
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => activeProvider && void connectWithWallet(activeProvider)}
+                        className="px-2.5 py-1 rounded bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-[11px] text-[#94A3B8] hover:text-[#F4F7FB] shrink-0"
+                      >
+                        Reconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-[#94A3B8] leading-relaxed">
+                      {walletConnecting
+                        ? 'Approve the connection prompt in your browser extension or mobile wallet app.'
+                        : detectedWallets.length > 0
+                        ? 'Select any detected Web3 wallet on your device to connect and authorize this acquisition.'
+                        : 'Trigger any Web3 wallet installed on your PC or mobile phone to link your titleholder address.'}
+                    </p>
+                  )}
+
+                  {walletError && (
+                    <p className="text-[11px] text-amber-300 bg-amber-950/30 border border-amber-500/30 rounded px-2.5 py-1.5">
+                      {walletError}
+                    </p>
+                  )}
+
+                  {/* Detected PC / In-App Browser Wallets (EIP-6963 + legacy) */}
+                  {detectedWallets.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {detectedWallets.map((wallet) => {
+                        const isActive = connectedWallet?.walletId === wallet.id;
+                        return (
+                          <button
+                            key={wallet.id}
+                            type="button"
+                            disabled={walletConnecting}
+                            onClick={() => void connectWithWallet(wallet)}
+                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                              isActive
+                                ? 'bg-[#38BDF8]/15 border-[#38BDF8] text-[#67E8F9]'
+                                : 'bg-[#0A0F16] border-[rgba(91,133,167,0.25)] text-[#F4F7FB] hover:border-[#38BDF8]/60'
+                            }`}
+                          >
+                            {wallet.icon && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={wallet.icon}
+                                alt=""
+                                className="h-4 w-4 rounded-sm"
+                              />
+                            )}
+                            <span>{wallet.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Controls for re-detecting desktop extensions or opening mobile wallet apps */}
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    {detectedWallets.length === 0 && (
+                      <button
+                        type="button"
+                        onClick={handleRefreshWallets}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9]"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        <span>Trigger / Detect Wallet</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowMobileLinks((prev) => !prev)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0A0F16] border border-[rgba(91,133,167,0.25)] text-[11px] text-[#94A3B8] hover:text-[#F4F7FB]"
+                    >
+                      <Smartphone className="h-3.5 w-3.5 text-[#38BDF8]" />
+                      <span>
+                        {showMobileLinks ? 'Hide Mobile Wallets' : 'Open Mobile Phone Wallet'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Mobile Phone Wallet Triggers & Deep Links */}
+                  {(showMobileLinks || (isMobile && detectedWallets.length === 0)) && (
+                    <div className="pt-2 border-t border-[rgba(91,133,167,0.16)] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] font-mono uppercase tracking-wider text-[#67E8F9]">
+                          Launch Mobile Wallet App
+                        </p>
+                        <button
+                          type="button"
+                          onClick={triggerDeviceEthereumWalletIntent}
+                          className="text-[11px] font-mono text-[#38BDF8] hover:underline inline-flex items-center gap-1"
+                        >
+                          <span>Trigger Phone Default (ethereum:)</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {getMobileWalletDeepLinks(buyParcel.id).map((wallet) => (
+                          <a
+                            key={wallet.id}
+                            href={wallet.href}
+                            className={`px-2.5 py-2 rounded-lg bg-[#0A0F16] border text-xs font-medium flex items-center justify-between gap-1.5 transition-colors ${wallet.accentClass}`}
+                          >
+                            <span className="truncate">{wallet.name}</span>
+                            <ExternalLink className="h-3 w-3 shrink-0 opacity-80" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {buyError && (
@@ -761,10 +1169,16 @@ export default function ExploreLandPage() {
                     id="paymentMethod"
                     value={paymentMethod}
                     onChange={(e) =>
-                      setPaymentMethod(e.target.value as LandPurchaseOrder['paymentMethod'])
+                      setPaymentMethod(e.target.value as PurchasePaymentMethod)
                     }
                     className="w-full h-10 px-3 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
                   >
+                    <option value="Web3 Wallet Signature (EIP-191)" className="bg-[#0A0F16]">
+                      Web3 Wallet Signature (EIP-191 Authorization)
+                    </option>
+                    <option value="Web3 Wallet On-Chain Escrow" className="bg-[#0A0F16]">
+                      Web3 Wallet On-Chain Escrow (Send Tx)
+                    </option>
                     <option value="Bank Escrow Transfer" className="bg-[#0A0F16]">
                       Bank Escrow Transfer
                     </option>
@@ -801,9 +1215,17 @@ export default function ExploreLandPage() {
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 h-11 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9]"
+                    disabled={submittingPurchase}
+                    className="flex-1 h-11 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] disabled:opacity-60 inline-flex items-center justify-center gap-2"
                   >
-                    Confirm Land Purchase
+                    {submittingPurchase && <Loader2 className="h-4 w-4 animate-spin" />}
+                    <span>
+                      {submittingPurchase
+                        ? 'Confirming in Wallet…'
+                        : paymentMethod.startsWith('Web3 Wallet')
+                        ? 'Authorize & Buy Land'
+                        : 'Confirm Land Purchase'}
+                    </span>
                   </button>
                 </div>
               </form>

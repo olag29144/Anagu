@@ -1,14 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AdvancedMarker,
-  InfoWindow,
-  Map as GoogleMap,
-  Pin,
-  useMap,
-  useMapsLibrary,
-} from '@vis.gl/react-google-maps';
+import dynamic from 'next/dynamic';
 import {
   AlertTriangle,
   Check,
@@ -18,6 +11,7 @@ import {
   Compass,
   Copy,
   Crosshair,
+  Download,
   Eraser,
   Layers,
   MapPin,
@@ -29,12 +23,14 @@ import {
   Square,
   Undo2,
   UploadCloud,
+  X,
 } from 'lucide-react';
-import { GoogleMapsShell } from './MapsContextProvider';
 import { PlaceSearchBox, type SelectedPlaceResult } from './PlaceSearchBox';
-import { InteractivePolygon } from './InteractivePolygon';
+import type {
+  MapViewCommand,
+  OpenMapControllerApi,
+} from './OpenMapGisCanvas';
 import {
-  NIGERIA_DEFAULT_CENTER,
   NIGERIA_GIS_HUBS,
   NIGERIA_PLOT_PRESETS,
   computeEdgeMeasurements,
@@ -51,7 +47,17 @@ import {
   toGeoJsonPolygon,
   type LatLngPoint,
 } from '@/lib/gis-utils';
+import { OPEN_MAP_LAYERS, type OpenMapLayerId } from '@/lib/openmap-tiles';
 import type { LandListing } from '@/lib/land-store';
+
+const OpenMapGisCanvas = dynamic(() => import('./OpenMapGisCanvas'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full w-full bg-[#05080D] flex items-center justify-center text-xs font-mono text-[#94A3B8] animate-pulse">
+      Initializing OpenStreetMap GIS Engine…
+    </div>
+  ),
+});
 
 export interface GisMeasurementPayload {
   areaSqm: number | null;
@@ -73,7 +79,6 @@ interface LandGisMapperProps {
 }
 
 type ToolMode = 'draw_polygon' | 'drop_pin' | 'pan';
-type MapLayerType = 'hybrid' | 'satellite' | 'roadmap' | 'terrain';
 type MapperTab = 'dimensions' | 'draw' | 'survey';
 
 interface SideDimensionsState {
@@ -88,81 +93,43 @@ interface CornerCoordInput {
   lng: string;
 }
 
-const EMPTY_CORNER_INPUTS: [CornerCoordInput, CornerCoordInput, CornerCoordInput, CornerCoordInput] = [
+const EMPTY_CORNER_INPUTS: [
+  CornerCoordInput,
+  CornerCoordInput,
+  CornerCoordInput,
+  CornerCoordInput,
+] = [
   { lat: '', lng: '' },
   { lat: '', lng: '' },
   { lat: '', lng: '' },
   { lat: '', lng: '' },
 ];
 
-function DraftPolylinePreview({
-  vertices,
-  hoverPoint,
-}: {
-  vertices: LatLngPoint[];
-  hoverPoint: LatLngPoint | null;
-}) {
-  const map = useMap();
-  const polylineRef = useRef<google.maps.Polyline | null>(null);
-
-  useEffect(() => {
-    if (!map) return;
-    const poly = new google.maps.Polyline({
-      map,
-      path: [],
-      strokeColor: '#38BDF8',
-      strokeOpacity: 0.9,
-      strokeWeight: 2.5,
-      clickable: false,
-      zIndex: 30,
-    });
-    polylineRef.current = poly;
-    return () => {
-      poly.setMap(null);
-      polylineRef.current = null;
-    };
-  }, [map]);
-
-  useEffect(() => {
-    const poly = polylineRef.current;
-    if (!poly) return;
-    if (vertices.length === 0) {
-      poly.setPath([]);
-      return;
-    }
-    const nextPath = [...vertices];
-    if (hoverPoint) {
-      nextPath.push(hoverPoint);
-    }
-    if (vertices.length >= 3 && hoverPoint) {
-      nextPath.push(vertices[0]);
-    }
-    poly.setPath(nextPath);
-  }, [vertices, hoverPoint]);
-
-  return null;
-}
-
-function LandGisMapperInner({
+export function LandGisMapper({
   existingParcels,
   parcelTitle,
   onGisChange,
   resetSignal = 0,
   isVisible = true,
 }: LandGisMapperProps) {
-  const map = useMap();
-  const geometryLib = useMapsLibrary('geometry');
+  const mapApiRef = useRef<OpenMapControllerApi | null>(null);
+  const geoJsonFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [activeTab, setActiveTab] = useState<MapperTab>('dimensions');
   const [toolMode, setToolMode] = useState<ToolMode>('drop_pin');
-  const [mapTypeId, setMapTypeId] = useState<MapLayerType>('hybrid');
+  const [layerId, setLayerId] = useState<OpenMapLayerId>('osm');
   const [showRegistryOverlay, setShowRegistryOverlay] = useState(true);
   const [selectedExistingParcel, setSelectedExistingParcel] = useState<LandListing | null>(null);
   const [showCenterAdvanced, setShowCenterAdvanced] = useState(false);
 
+  // Camera & telemetry state
+  const [viewCommand, setViewCommand] = useState<MapViewCommand | null>(null);
+  const viewSeqRef = useRef(0);
+  const [cursorCoords, setCursorCoords] = useState<LatLngPoint | null>(null);
+  const [mapZoom, setMapZoom] = useState<number>(6);
+
   // Spatial drawing states
   const [draftVertices, setDraftVertices] = useState<LatLngPoint[]>([]);
-  const [hoverPoint, setHoverPoint] = useState<LatLngPoint | null>(null);
   const [polygonVertices, setPolygonVertices] = useState<LatLngPoint[]>([]);
   const [pinPosition, setPinPosition] = useState<LatLngPoint | null>(null);
 
@@ -189,50 +156,30 @@ function LandGisMapperInner({
   const [geoJsonCopied, setGeoJsonCopied] = useState(false);
   const [geoStatus, setGeoStatus] = useState<string | null>(null);
 
-  // Refs for map event listeners
-  const toolModeRef = useRef<ToolMode>(toolMode);
-  const draftVerticesRef = useRef<LatLngPoint[]>(draftVertices);
   const sideDimensionsRef = useRef<SideDimensionsState>(sideDimensions);
   const bearingDegRef = useRef<string>(bearingDeg);
-  toolModeRef.current = toolMode;
-  draftVerticesRef.current = draftVertices;
+  const draftVerticesRef = useRef<LatLngPoint[]>(draftVertices);
+  const toolModeRef = useRef<ToolMode>(toolMode);
   sideDimensionsRef.current = sideDimensions;
   bearingDegRef.current = bearingDeg;
+  draftVerticesRef.current = draftVertices;
+  toolModeRef.current = toolMode;
 
-  // Sync mapTypeId changes imperatively
-  useEffect(() => {
-    if (map) {
-      map.setMapTypeId(mapTypeId);
-    }
-  }, [map, mapTypeId]);
+  const issuePan = useCallback((center: LatLngPoint, zoom?: number) => {
+    viewSeqRef.current += 1;
+    setViewCommand({ type: 'pan', center, zoom, seq: viewSeqRef.current });
+  }, []);
 
-  const fitMapToPolygon = useCallback(
-    (points: LatLngPoint[]) => {
-      if (!map || points.length === 0 || typeof google === 'undefined') return;
-      const bounds = new google.maps.LatLngBounds();
-      points.forEach((pt) => bounds.extend(pt));
-      map.fitBounds(bounds, 56);
-    },
-    [map],
-  );
+  const fitMapToPolygon = useCallback((points: LatLngPoint[]) => {
+    if (points.length === 0) return;
+    viewSeqRef.current += 1;
+    setViewCommand({ type: 'fitBounds', points, seq: viewSeqRef.current });
+  }, []);
 
-  // Ensure Google Map refreshes layout when step/container becomes visible again
-  useEffect(() => {
-    if (!map || !isVisible || typeof google === 'undefined') return;
-    const timer = window.setTimeout(() => {
-      google.maps.event.trigger(map, 'resize');
-      if (polygonVertices.length >= 3) {
-        const bounds = new google.maps.LatLngBounds();
-        polygonVertices.forEach((pt) => bounds.extend(pt));
-        map.fitBounds(bounds, 56);
-      } else if (pinPosition) {
-        map.panTo(pinPosition);
-      }
-    }, 60);
-    return () => window.clearTimeout(timer);
-    // Only re-trigger when visibility flips true
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVisible, map]);
+  const fitMapToBox = useCallback((box: [[number, number], [number, number]]) => {
+    viewSeqRef.current += 1;
+    setViewCommand({ type: 'fitBox', box, seq: viewSeqRef.current });
+  }, []);
 
   const syncInputsFromPolygon = useCallback(
     (points: LatLngPoint[], overrideCenter?: LatLngPoint | null) => {
@@ -286,7 +233,6 @@ function LandGisMapperInner({
   useEffect(() => {
     if (resetSignal === 0) return;
     setDraftVertices([]);
-    setHoverPoint(null);
     setPolygonVertices([]);
     setPinPosition(null);
     setActiveTab('dimensions');
@@ -299,9 +245,10 @@ function LandGisMapperInner({
     setCornerInputs(EMPTY_CORNER_INPUTS);
     setCornerCoordError(null);
     setGeoStatus(null);
+    setSelectedExistingParcel(null);
   }, [resetSignal]);
 
-  // Compute area & perimeter via Google Maps geometry library (or fallback)
+  // Compute spherical GIS area & perimeter
   const measurements = useMemo(() => {
     if (polygonVertices.length < 3) {
       const center = pinPosition;
@@ -313,28 +260,17 @@ function LandGisMapperInner({
       };
     }
 
-    let area = 0;
-    let perimeter = 0;
-
-    if (geometryLib?.spherical && typeof google !== 'undefined') {
-      const latLngPath = polygonVertices.map((pt) => new google.maps.LatLng(pt.lat, pt.lng));
-      area = Math.round(geometryLib.spherical.computeArea(latLngPath));
-      perimeter = Math.round(
-        geometryLib.spherical.computeLength([...latLngPath, latLngPath[0]]),
-      );
-    } else {
-      area = Math.round(computeSphericalAreaFallback(polygonVertices));
-      perimeter = Math.round(computePerimeterFallback(polygonVertices));
-    }
-
+    const area = Math.round(computeSphericalAreaFallback(polygonVertices));
+    const perimeter = Math.round(computePerimeterFallback(polygonVertices));
     const centroid = computePolygonCentroid(polygonVertices) || pinPosition;
+
     return {
       areaSqm: area > 0 ? area : null,
       perimeterMeters: perimeter > 0 ? perimeter : null,
       centroid,
       coordinates: centroid ? formatCoordinateString(centroid.lat, centroid.lng) : '',
     };
-  }, [polygonVertices, pinPosition, geometryLib]);
+  }, [polygonVertices, pinPosition]);
 
   // Emit spatial updates to parent registration form
   const onGisChangeRef = useRef(onGisChange);
@@ -356,7 +292,6 @@ function LandGisMapperInner({
     [polygonVertices],
   );
 
-  // Check boundary overlap against existing registered parcels
   const overlappingParcels = useMemo(() => {
     if (polygonVertices.length < 3) return [];
     return existingParcels.filter(
@@ -372,15 +307,32 @@ function LandGisMapperInner({
       if (points.length < 3) return;
       setPolygonVertices(points);
       setDraftVertices([]);
-      setHoverPoint(null);
       const centroid = computePolygonCentroid(points);
       if (centroid) setPinPosition(centroid);
       syncInputsFromPolygon(points, centroid);
       setToolMode('pan');
-      setGeoStatus('Land boundary marked. Drag any corner badge (C1–C4) to adjust.');
+      setGeoStatus('Land boundary marked on OpenMap. Drag any corner badge (C1–C4) to adjust.');
     },
     [syncInputsFromPolygon],
   );
+
+  // Keyboard shortcuts: Enter to finish polygon, Escape to cancel draft
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === 'Enter' &&
+        toolModeRef.current === 'draw_polygon' &&
+        draftVerticesRef.current.length >= 3
+      ) {
+        e.preventDefault();
+        finishPolygon(draftVerticesRef.current);
+      } else if (e.key === 'Escape' && draftVerticesRef.current.length > 0) {
+        setDraftVertices([]);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [finishPolygon]);
 
   const applyFourSideDimensions = useCallback(
     (
@@ -441,12 +393,9 @@ function LandGisMapperInner({
         : pinPosition;
 
       if (!center && options?.fallbackToDefaultAnchor) {
-        const zoom = map?.getZoom() ?? 6;
-        const mapCenter = map?.getCenter();
-        center =
-          zoom >= 11 && mapCenter
-            ? { lat: mapCenter.lat(), lng: mapCenter.lng() }
-            : { lat: 6.4474, lng: 3.4723 };
+        const zoom = mapApiRef.current?.getZoom() ?? 6;
+        const mapCenter = mapApiRef.current?.getCenter();
+        center = zoom >= 11 && mapCenter ? mapCenter : { lat: 6.4474, lng: 3.4723 };
       }
 
       if (!center) {
@@ -468,7 +417,6 @@ function LandGisMapperInner({
       setDimensionError(null);
       setCornerCoordError(null);
       setDraftVertices([]);
-      setHoverPoint(null);
       setPolygonVertices(solved.corners);
       setPinPosition(center);
       setToolMode('pan');
@@ -484,119 +432,86 @@ function LandGisMapperInner({
       }
 
       setGeoStatus(
-        `4 corners (C1–C4) marked on map (${n.toFixed(1)}m × ${e.toFixed(1)}m × ${s.toFixed(1)}m × ${w.toFixed(1)}m).`,
+        `4 corners (C1–C4) marked on OpenMap (${n.toFixed(1)}m × ${e.toFixed(1)}m × ${s.toFixed(1)}m × ${w.toFixed(1)}m).`,
       );
       return true;
     },
-    [fitMapToPolygon, map, pinPosition],
+    [fitMapToPolygon, pinPosition],
   );
 
-  // Attach map click / mousemove / dblclick listeners for pin drop and polygon drawing
-  useEffect(() => {
-    if (!map) return;
+  const handlePinDropFromMap = useCallback(
+    (point: LatLngPoint) => {
+      setPinPosition(point);
+      const latStr = point.lat.toFixed(6);
+      const lngStr = point.lng.toFixed(6);
+      setCenterLatInput(latStr);
+      setCenterLngInput(lngStr);
 
-    const clickListener = map.addListener('click', (e: google.maps.MapMouseEvent) => {
-      if (!e.latLng) return;
-      const point = { lat: e.latLng.lat(), lng: e.latLng.lng() };
-
-      if (toolModeRef.current === 'drop_pin') {
-        setPinPosition(point);
-        const latStr = point.lat.toFixed(6);
-        const lngStr = point.lng.toFixed(6);
-        setCenterLatInput(latStr);
-        setCenterLngInput(lngStr);
-
-        const curSides = sideDimensionsRef.current;
-        const n = parseFloat(curSides.north);
-        const east = parseFloat(curSides.east);
-        const s = parseFloat(curSides.south);
-        const w = parseFloat(curSides.west);
-        if (n > 0 && east > 0 && s > 0 && w > 0) {
-          const bearing = Number.isFinite(parseFloat(bearingDegRef.current))
-            ? parseFloat(bearingDegRef.current)
-            : 0;
-          const solved = computeFourCornerPolygonFromDimensions(point, n, east, s, w, bearing);
-          if (!solved.error && solved.corners.length === 4) {
-            setPolygonVertices(solved.corners);
-            setCornerInputs([
-              { lat: solved.corners[0].lat.toFixed(6), lng: solved.corners[0].lng.toFixed(6) },
-              { lat: solved.corners[1].lat.toFixed(6), lng: solved.corners[1].lng.toFixed(6) },
-              { lat: solved.corners[2].lat.toFixed(6), lng: solved.corners[2].lng.toFixed(6) },
-              { lat: solved.corners[3].lat.toFixed(6), lng: solved.corners[3].lng.toFixed(6) },
-            ]);
-            setToolMode('pan');
-            const bounds = new google.maps.LatLngBounds();
-            solved.corners.forEach((pt) => bounds.extend(pt));
-            map.fitBounds(bounds, 56);
-            setGeoStatus('Pin moved and 4-corner land boundary marked at this spot.');
-            return;
-          }
+      const curSides = sideDimensionsRef.current;
+      const n = parseFloat(curSides.north);
+      const east = parseFloat(curSides.east);
+      const s = parseFloat(curSides.south);
+      const w = parseFloat(curSides.west);
+      if (n > 0 && east > 0 && s > 0 && w > 0) {
+        const bearing = Number.isFinite(parseFloat(bearingDegRef.current))
+          ? parseFloat(bearingDegRef.current)
+          : 0;
+        const solved = computeFourCornerPolygonFromDimensions(point, n, east, s, w, bearing);
+        if (!solved.error && solved.corners.length === 4) {
+          setPolygonVertices(solved.corners);
+          setCornerInputs([
+            { lat: solved.corners[0].lat.toFixed(6), lng: solved.corners[0].lng.toFixed(6) },
+            { lat: solved.corners[1].lat.toFixed(6), lng: solved.corners[1].lng.toFixed(6) },
+            { lat: solved.corners[2].lat.toFixed(6), lng: solved.corners[2].lng.toFixed(6) },
+            { lat: solved.corners[3].lat.toFixed(6), lng: solved.corners[3].lng.toFixed(6) },
+          ]);
+          setToolMode('pan');
+          fitMapToPolygon(solved.corners);
+          setGeoStatus('Pin moved and 4-corner land boundary marked at this spot.');
+          return;
         }
-        setGeoStatus('Land spot pinned! Enter your 4 side sizes in meters or tap a plot preset.');
-        return;
       }
+      setGeoStatus('Land spot pinned! Enter your 4 side sizes in meters or tap a plot preset.');
+    },
+    [fitMapToPolygon],
+  );
 
-      if (toolModeRef.current === 'draw_polygon') {
-        setDraftVertices((prev) => [...prev, point]);
+  const handlePinDragEnd = useCallback(
+    (nextPt: LatLngPoint) => {
+      const prevCenter = pinPosition;
+      setPinPosition(nextPt);
+      setCenterLatInput(nextPt.lat.toFixed(6));
+      setCenterLngInput(nextPt.lng.toFixed(6));
+
+      if (prevCenter && polygonVertices.length >= 3) {
+        const dLat = nextPt.lat - prevCenter.lat;
+        const dLng = nextPt.lng - prevCenter.lng;
+        const shifted = polygonVertices.map((v) => ({
+          lat: v.lat + dLat,
+          lng: v.lng + dLng,
+        }));
+        handlePolygonPathChange(shifted);
+        setGeoStatus('Moved land plot to new center pin location.');
       }
-    });
+    },
+    [pinPosition, polygonVertices, handlePolygonPathChange],
+  );
 
-    const moveListener = map.addListener('mousemove', (e: google.maps.MapMouseEvent) => {
-      if (!e.latLng) return;
-      if (toolModeRef.current === 'draw_polygon' && draftVerticesRef.current.length > 0) {
-        setHoverPoint({ lat: e.latLng.lat(), lng: e.latLng.lng() });
-      }
-    });
-
-    const dblClickListener = map.addListener('dblclick', (e: google.maps.MapMouseEvent) => {
-      if (toolModeRef.current !== 'draw_polygon') return;
-      e.domEvent?.preventDefault?.();
-      e.domEvent?.stopPropagation?.();
-      if (draftVerticesRef.current.length >= 3) {
-        finishPolygon(draftVerticesRef.current);
-      }
-    });
-
-    return () => {
-      google.maps.event.removeListener(clickListener);
-      google.maps.event.removeListener(moveListener);
-      google.maps.event.removeListener(dblClickListener);
-    };
-  }, [map, finishPolygon]);
-
-  // Keyboard shortcuts: Enter to finish polygon, Escape to cancel draft
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.key === 'Enter' &&
-        toolModeRef.current === 'draw_polygon' &&
-        draftVerticesRef.current.length >= 3
-      ) {
-        e.preventDefault();
-        finishPolygon(draftVerticesRef.current);
-      } else if (e.key === 'Escape' && draftVerticesRef.current.length > 0) {
-        setDraftVertices([]);
-        setHoverPoint(null);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [finishPolygon]);
+  const handleCornerDrag = useCallback(
+    (idx: number, nextPt: LatLngPoint) => {
+      const updated = polygonVertices.map((vertex, i) => (i === idx ? nextPt : vertex));
+      handlePolygonPathChange(updated);
+      setGeoStatus(`Moved Corner C${idx + 1}.`);
+    },
+    [polygonVertices, handlePolygonPathChange],
+  );
 
   const handleSelectTab = (tab: MapperTab) => {
     setActiveTab(tab);
     if (tab === 'draw') {
-      if (polygonVertices.length < 3) {
-        setToolMode('draw_polygon');
-      } else {
-        setToolMode('pan');
-      }
+      setToolMode(polygonVertices.length < 3 ? 'draw_polygon' : 'pan');
     } else if (tab === 'dimensions') {
-      if (polygonVertices.length < 3) {
-        setToolMode('drop_pin');
-      } else {
-        setToolMode('pan');
-      }
+      setToolMode(polygonVertices.length < 3 ? 'drop_pin' : 'pan');
     } else {
       setToolMode('pan');
     }
@@ -619,14 +534,11 @@ function LandGisMapperInner({
         { fitBounds: true, syncCenterFields: false },
       );
 
-      if (!appliedDimensions && map) {
-        if (result.viewport) {
-          map.fitBounds(result.viewport);
-          const currentZoom = map.getZoom();
-          if (currentZoom && currentZoom < 16) map.setZoom(17);
+      if (!appliedDimensions) {
+        if (result.boundingBox) {
+          fitMapToBox(result.boundingBox);
         } else {
-          map.panTo(target);
-          map.setZoom(17);
+          issuePan(target, 16);
         }
       }
 
@@ -643,13 +555,14 @@ function LandGisMapperInner({
 
       if (!appliedDimensions) {
         setGeoStatus(
-          `Found ${result.displayName}. Enter your 4 side sizes or tap a plot preset to mark corners.`,
+          `Found ${result.displayName} on OpenStreetMap. Enter your 4 side sizes or tap a plot preset.`,
         );
       }
     },
     [
       applyFourSideDimensions,
-      map,
+      fitMapToBox,
+      issuePan,
       measurements.areaSqm,
       measurements.perimeterMeters,
       polygonVertices,
@@ -671,9 +584,8 @@ function LandGisMapperInner({
       { fitBounds: true, syncCenterFields: false },
     );
 
-    if (!appliedDimensions && map) {
-      map.panTo(hub.center);
-      map.setZoom(hub.zoom);
+    if (!appliedDimensions) {
+      issuePan(hub.center, hub.zoom);
     }
 
     onGisChangeRef.current({
@@ -716,24 +628,22 @@ function LandGisMapperInner({
           { fitBounds: true, syncCenterFields: false },
         );
 
-        if (!appliedDimensions && map) {
-          map.panTo(pt);
-          map.setZoom(18);
+        if (!appliedDimensions) {
+          issuePan(pt, 18);
           setGeoStatus('Locked onto your live GPS position. Enter 4 side sizes or tap corners.');
         }
       },
       () => {
-        setGeoStatus('Location access was denied. Search your town/street or tap a quick city above.');
+        setGeoStatus(
+          'Location access was denied. Search your town/street or tap a quick city above.',
+        );
       },
       { enableHighAccuracy: true, timeout: 8000 },
     );
   };
 
   const handleUseCurrentMapCenter = () => {
-    const mapCenter = map?.getCenter();
-    const pt = mapCenter
-      ? { lat: mapCenter.lat(), lng: mapCenter.lng() }
-      : { lat: 6.4474, lng: 3.4723 };
+    const pt = mapApiRef.current?.getCenter() ?? { lat: 6.4474, lng: 3.4723 };
     const latStr = pt.lat.toFixed(6);
     const lngStr = pt.lng.toFixed(6);
     setPinPosition(pt);
@@ -744,7 +654,7 @@ function LandGisMapperInner({
       syncCenterFields: false,
     });
     if (!applied) {
-      setGeoStatus('Center captured from map. Enter your 4 side sizes to mark corners.');
+      setGeoStatus('Center captured from OpenMap. Enter your 4 side sizes to mark corners.');
     }
   };
 
@@ -781,9 +691,9 @@ function LandGisMapperInner({
         fitBounds: true,
         syncCenterFields: false,
       });
-      if (!applied && map) {
-        map.panTo(target);
-        if ((map.getZoom() ?? 6) < 16) map.setZoom(17);
+      if (!applied) {
+        const currentZoom = mapApiRef.current?.getZoom() ?? 6;
+        issuePan(target, currentZoom < 16 ? 17 : currentZoom);
       }
     }
   };
@@ -809,7 +719,7 @@ function LandGisMapperInner({
       fitBounds: true,
     });
     if (applied) {
-      setGeoStatus(`Marked ${label} 4-corner plot automatically on the map.`);
+      setGeoStatus(`Marked ${label} 4-corner plot automatically on OpenMap.`);
     }
   };
 
@@ -829,7 +739,9 @@ function LandGisMapperInner({
     });
 
     if (anyOutOfRange) {
-      setCornerCoordError('Latitude must be between -90 and 90, and Longitude between -180 and 180.');
+      setCornerCoordError(
+        'Latitude must be between -90 and 90, and Longitude between -180 and 180.',
+      );
       return;
     }
 
@@ -850,7 +762,6 @@ function LandGisMapperInner({
 
     setCornerCoordError(null);
     setDraftVertices([]);
-    setHoverPoint(null);
     setPolygonVertices(parsedPts);
     const centroid = computePolygonCentroid(parsedPts);
     if (centroid) {
@@ -870,21 +781,18 @@ function LandGisMapperInner({
     }
     setToolMode('pan');
     fitMapToPolygon(parsedPts);
-    setGeoStatus('4 exact corner coordinates (C1–C4) marked on the map.');
+    setGeoStatus('4 exact corner coordinates (C1–C4) marked on OpenMap.');
   };
 
   const handleStampPlot = (widthM: number, lengthM: number, label: string) => {
     if (Number.isNaN(widthM) || Number.isNaN(lengthM) || widthM <= 0 || lengthM <= 0) return;
-    const mapCenter = map?.getCenter();
+    const mapCenter = mapApiRef.current?.getCenter();
+    const zoom = mapApiRef.current?.getZoom() ?? 6;
     const center: LatLngPoint =
-      pinPosition ??
-      (mapCenter && (map?.getZoom() ?? 6) >= 11
-        ? { lat: mapCenter.lat(), lng: mapCenter.lng() }
-        : { lat: 6.4474, lng: 3.4723 });
+      pinPosition ?? (mapCenter && zoom >= 11 ? mapCenter : { lat: 6.4474, lng: 3.4723 });
 
     const rect = createRectangleAroundPoint(center, widthM, lengthM);
     setDraftVertices([]);
-    setHoverPoint(null);
     setPolygonVertices(rect);
     setPinPosition(center);
     syncInputsFromPolygon(rect, center);
@@ -910,32 +818,45 @@ function LandGisMapperInner({
 
   const handleClearBoundary = () => {
     setDraftVertices([]);
-    setHoverPoint(null);
     setPolygonVertices([]);
     setSideDimensions({ north: '', east: '', south: '', west: '' });
     setDimensionError(null);
     setCornerInputs(EMPTY_CORNER_INPUTS);
     setCornerCoordError(null);
     setToolMode(activeTab === 'draw' ? 'draw_polygon' : 'drop_pin');
-    setGeoStatus('Boundary cleared. Enter 4 side sizes or tap corners on the map.');
+    setGeoStatus('Boundary cleared. Enter 4 side sizes or tap corners on OpenMap.');
   };
 
-  const handleImportPolygon = () => {
-    const parsed = parsePolygonInput(importText);
+  const plotImportedText = (rawText: string) => {
+    const parsed = parsePolygonInput(rawText);
     if (parsed.error || parsed.points.length < 3) {
       setImportError(parsed.error || 'Could not parse polygon coordinates.');
       return;
     }
     setImportError(null);
     setDraftVertices([]);
-    setHoverPoint(null);
     setPolygonVertices(parsed.points);
     const centroid = computePolygonCentroid(parsed.points);
     if (centroid) setPinPosition(centroid);
     syncInputsFromPolygon(parsed.points, centroid);
     setToolMode('pan');
     fitMapToPolygon(parsed.points);
-    setGeoStatus(`Plotted ${parsed.points.length} survey corners on the map.`);
+    setGeoStatus(`Plotted ${parsed.points.length} survey corners on OpenMap GIS.`);
+  };
+
+  const handleImportPolygon = () => {
+    plotImportedText(importText);
+  };
+
+  const handleGeoJsonFileUpload = (file: File | null) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      setImportText(text);
+      plotImportedText(text);
+    };
+    reader.readAsText(file);
   };
 
   const handleCopyGeoJson = () => {
@@ -946,19 +867,37 @@ function LandGisMapperInner({
     window.setTimeout(() => setGeoJsonCopied(false), 2000);
   };
 
+  const handleDownloadGeoJson = () => {
+    if (polygonVertices.length < 3) return;
+    const json = toGeoJsonPolygon(polygonVertices, parcelTitle || 'Anagu Land Parcel');
+    const blob = new Blob([json], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const slug = (parcelTitle || 'anagu-parcel')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    a.download = `${slug || 'anagu-parcel'}.geojson`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const equivalents = measurements.areaSqm
     ? formatPlotEquivalents(measurements.areaSqm)
     : null;
 
   return (
     <div className="space-y-4">
-      {/* Step 1 inside Map: Find Location Easily */}
+      {/* Step 1 inside Map: Find Location Easily via OpenStreetMap Nominatim */}
       <div className="space-y-2.5">
         <div className="flex flex-col sm:flex-row gap-2.5">
           <div className="flex-1">
             <PlaceSearchBox
               onPlaceSelect={handlePlaceSelect}
-              placeholder="Search street, town, estate, or area (e.g. Lekki Phase 1, Abuja)..."
+              placeholder="Search street, town, estate, or area on OpenStreetMap (e.g. Lekki Phase 1, Abuja)..."
             />
           </div>
           <button
@@ -987,7 +926,7 @@ function LandGisMapperInner({
         </div>
       </div>
 
-      {/* Unified 3-Mode Boundary Tool Switcher (Easy -> Advanced) */}
+      {/* Unified 3-Mode GIS Boundary Tool Switcher */}
       <div className="rounded-[10px] bg-[#05080D] border border-[rgba(91,133,167,0.25)] p-4 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-lg bg-[#0A0F16] border border-[rgba(91,133,167,0.20)]">
@@ -1025,7 +964,7 @@ function LandGisMapperInner({
               }`}
             >
               <UploadCloud className="h-3.5 w-3.5" />
-              <span>4-Corner GPS &amp; Survey Import</span>
+              <span>4-Corner GPS &amp; GeoJSON Import</span>
             </button>
           </div>
 
@@ -1056,7 +995,7 @@ function LandGisMapperInner({
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#94A3B8]">
               <span>
-                Search your area above (or tap the map to place your pin), then enter the 4 sides of your land in meters — all 4 corners mark automatically.
+                Search your area above (or tap OpenMap to place your pin), then enter the 4 sides of your land in meters — all 4 corners mark automatically.
               </span>
               <button
                 type="button"
@@ -1231,7 +1170,7 @@ function LandGisMapperInner({
           </div>
         )}
 
-        {/* TAB 2: Tap Corners Directly on Map + Plot Stamp */}
+        {/* TAB 2: Tap Corners Directly on OpenMap + Plot Stamp */}
         {activeTab === 'draw' && (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -1417,9 +1356,30 @@ function LandGisMapperInner({
             </div>
 
             <div className="pt-3 border-t border-[rgba(91,133,167,0.14)] space-y-2">
-              <p className="text-xs text-[#94A3B8]">
-                Or paste a GeoJSON Polygon / survey beacon coordinates (<code className="text-[#38BDF8]">lat, lng</code> per line):
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-[#94A3B8]">
+                  Or paste / upload a GeoJSON Polygon or survey beacon coordinates (
+                  <code className="text-[#38BDF8]">lat, lng</code> per line):
+                </p>
+                <input
+                  ref={geoJsonFileInputRef}
+                  type="file"
+                  accept=".geojson,.json,.txt,.csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    handleGeoJsonFileUpload(e.target.files?.[0] ?? null);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => geoJsonFileInputRef.current?.click()}
+                  className="h-7 px-2.5 rounded-md bg-[#0A0F16] border border-[rgba(91,133,167,0.28)] text-[11px] font-medium text-[#67E8F9] hover:border-[#38BDF8] inline-flex items-center gap-1.5"
+                >
+                  <UploadCloud className="h-3.5 w-3.5" />
+                  <span>Import .geojson File</span>
+                </button>
+              </div>
               <textarea
                 rows={3}
                 value={importText}
@@ -1434,7 +1394,7 @@ function LandGisMapperInner({
                   onClick={handleImportPolygon}
                   className="h-8 px-3.5 rounded-lg bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9] whitespace-nowrap"
                 >
-                  Plot on GIS Map
+                  Plot on OpenMap GIS
                 </button>
               </div>
             </div>
@@ -1442,21 +1402,16 @@ function LandGisMapperInner({
         )}
       </div>
 
-      {/* Compact Map Layer Bar */}
+      {/* Compact OpenMap Layer Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="inline-flex rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-0.5">
-          {([
-            { id: 'hybrid', label: 'Satellite + Labels' },
-            { id: 'satellite', label: 'Satellite' },
-            { id: 'roadmap', label: 'Street Map' },
-            { id: 'terrain', label: 'Terrain' },
-          ] as Array<{ id: MapLayerType; label: string }>).map((layer) => (
+        <div className="inline-flex flex-wrap rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-0.5">
+          {OPEN_MAP_LAYERS.map((layer) => (
             <button
               key={layer.id}
               type="button"
-              onClick={() => setMapTypeId(layer.id)}
+              onClick={() => setLayerId(layer.id)}
               className={`px-2.5 py-1 rounded-md text-[11px] font-medium whitespace-nowrap shrink-0 transition-colors ${
-                mapTypeId === layer.id
+                layerId === layer.id
                   ? 'bg-[#38BDF8]/20 text-[#67E8F9]'
                   : 'text-[#64748B] hover:text-[#E2E8F0]'
               }`}
@@ -1480,268 +1435,129 @@ function LandGisMapperInner({
         </button>
       </div>
 
-      {/* Map Canvas Container (Explicit Height Required - CF2) */}
+      {/* OpenMap + Leaflet GIS Canvas Container */}
       <div className="relative h-[420px] lg:h-[480px] w-full rounded-[10px] overflow-hidden border border-[rgba(91,133,167,0.28)] bg-[#05080D]">
-        <GoogleMap
-          mapId="DEMO_MAP_ID"
-          defaultCenter={NIGERIA_DEFAULT_CENTER}
-          defaultZoom={6}
-          mapTypeId={mapTypeId}
-          gestureHandling="greedy"
-          disableDoubleClickZoom={toolMode === 'draw_polygon'}
-          streetViewControl={false}
-          mapTypeControl={false}
-          fullscreenControl={true}
-          internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-        >
-          {/* Existing Registry Parcels Overlay */}
-          {showRegistryOverlay &&
-            existingParcels.map((parcel) => {
-              const center =
-                parcel.lat !== undefined && parcel.lng !== undefined
-                  ? { lat: parcel.lat, lng: parcel.lng }
-                  : null;
-              return (
-                <React.Fragment key={parcel.id}>
-                  {parcel.polygon && parcel.polygon.length >= 3 && (
-                    <InteractivePolygon
-                      paths={parcel.polygon}
-                      editable={false}
-                      draggable={false}
-                      strokeColor={parcel.saleStatus === 'sold' ? '#F43F5E' : '#10B981'}
-                      fillColor={parcel.saleStatus === 'sold' ? '#F43F5E' : '#10B981'}
-                      fillOpacity={0.18}
-                      strokeWeight={2}
-                      zIndex={10}
-                      clickable={toolMode === 'pan'}
-                      onClick={() => setSelectedExistingParcel(parcel)}
-                    />
-                  )}
-                  {center && (
-                    <AdvancedMarker
-                      position={center}
-                      title={`${parcel.title} (${parcel.parcelRef})`}
-                      onClick={() => setSelectedExistingParcel(parcel)}
-                    >
-                      <Pin
-                        background={parcel.saleStatus === 'sold' ? '#E11D48' : '#10B981'}
-                        borderColor="#020305"
-                        glyphColor="#020305"
-                        scale={0.85}
-                      />
-                    </AdvancedMarker>
-                  )}
-                </React.Fragment>
-              );
-            })}
+        <OpenMapGisCanvas
+          layerId={layerId}
+          toolMode={toolMode}
+          isVisible={isVisible}
+          viewCommand={viewCommand}
+          showRegistryOverlay={showRegistryOverlay}
+          existingParcels={existingParcels}
+          draftVertices={draftVertices}
+          polygonVertices={polygonVertices}
+          pinPosition={pinPosition}
+          isOverlapping={overlappingParcels.length > 0}
+          edgeMeasurements={edgeMeasurements}
+          onMapReady={(api) => {
+            mapApiRef.current = api;
+          }}
+          onCursorMove={setCursorCoords}
+          onZoomChange={setMapZoom}
+          onPinDrop={handlePinDropFromMap}
+          onPinDragEnd={handlePinDragEnd}
+          onAddDraftVertex={(pt) => setDraftVertices((prev) => [...prev, pt])}
+          onFinishDraft={() => finishPolygon(draftVerticesRef.current)}
+          onCornerDrag={handleCornerDrag}
+          onSelectExistingParcel={(parcel) => setSelectedExistingParcel(parcel)}
+        />
 
-          {selectedExistingParcel &&
-            selectedExistingParcel.lat !== undefined &&
-            selectedExistingParcel.lng !== undefined && (
-              <InfoWindow
-                position={{
-                  lat: selectedExistingParcel.lat,
-                  lng: selectedExistingParcel.lng,
-                }}
-                onCloseClick={() => setSelectedExistingParcel(null)}
-              >
-                <div className="text-slate-900 p-1 max-w-[220px] space-y-1">
-                  <p className="text-[11px] font-mono text-sky-700 font-semibold">
-                    {selectedExistingParcel.parcelRef}
-                  </p>
-                  <p className="text-xs font-bold leading-snug">
-                    {selectedExistingParcel.title}
-                  </p>
-                  <p className="text-[11px] text-slate-600">
-                    {selectedExistingParcel.areaSqm.toLocaleString()} sqm · {selectedExistingParcel.state}
-                  </p>
-                </div>
-              </InfoWindow>
-            )}
-
-          {/* Live Polyline Preview while drawing polygon */}
-          {toolMode === 'draw_polygon' && draftVertices.length > 0 && (
-            <DraftPolylinePreview vertices={draftVertices} hoverPoint={hoverPoint} />
+        {/* Top-Right GIS Telemetry Pill */}
+        <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 rounded-md bg-[#020305]/85 backdrop-blur-md border border-[rgba(91,133,167,0.32)] px-2.5 py-1 text-[11px] font-mono text-[#67E8F9]">
+          <span>Z{mapZoom}</span>
+          {cursorCoords && (
+            <>
+              <span className="text-[#475569]">|</span>
+              <span>{formatCoordinateString(cursorCoords.lat, cursorCoords.lng)}</span>
+            </>
           )}
+        </div>
 
-          {/* Draft Vertex Markers */}
-          {draftVertices.map((pt, index) => {
-            const isFirstClosable = index === 0 && draftVertices.length >= 3;
-            return (
-              <AdvancedMarker
-                key={`draft-${index}-${pt.lat}-${pt.lng}`}
-                position={pt}
-                title={
-                  isFirstClosable
-                    ? 'Click 1 to close boundary'
-                    : `Corner ${index + 1}`
-                }
-                onClick={() => {
-                  if (isFirstClosable) {
-                    finishPolygon(draftVertices);
-                  }
-                }}
+        {/* Selected Existing Registry Plot Info Card */}
+        {selectedExistingParcel && (
+          <div className="absolute top-3 left-14 z-20 max-w-[240px] rounded-lg bg-[#0A0F16]/95 backdrop-blur-md border border-[rgba(91,133,167,0.35)] p-3 shadow-xl space-y-1">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-[11px] font-mono text-[#38BDF8] font-semibold">
+                {selectedExistingParcel.parcelRef}
+              </p>
+              <button
+                type="button"
+                onClick={() => setSelectedExistingParcel(null)}
+                className="text-[#94A3B8] hover:text-[#F4F7FB]"
+                aria-label="Close existing parcel details"
               >
-                <div
-                  className={`flex items-center justify-center rounded-full text-[10px] font-mono font-bold shadow-lg border-2 transition-transform ${
-                    isFirstClosable
-                      ? 'h-6 w-6 bg-emerald-400 border-[#020305] text-[#020305] scale-110 cursor-pointer'
-                      : 'h-5 w-5 bg-[#38BDF8] border-[#020305] text-[#020305]'
-                  }`}
-                >
-                  {index + 1}
-                </div>
-              </AdvancedMarker>
-            );
-          })}
-
-          {/* Finalized Editable Parcel Polygon */}
-          {polygonVertices.length >= 3 && (
-            <InteractivePolygon
-              paths={polygonVertices}
-              editable={true}
-              draggable={true}
-              strokeColor={overlappingParcels.length > 0 ? '#F59E0B' : '#38BDF8'}
-              fillColor={overlappingParcels.length > 0 ? '#F59E0B' : '#38BDF8'}
-              fillOpacity={0.24}
-              strokeWeight={3}
-              zIndex={25}
-              onPathChange={handlePolygonPathChange}
-            />
-          )}
-
-          {/* Draggable Corner Beacon Badges (C1, C2, C3, C4...) */}
-          {polygonVertices.map((pt, idx) => (
-            <AdvancedMarker
-              key={`corner-beacon-${idx}`}
-              position={pt}
-              draggable={true}
-              zIndex={40}
-              title={`Corner C${idx + 1} (${pt.lat.toFixed(6)}, ${pt.lng.toFixed(6)}) — drag to adjust`}
-              onDragEnd={(e) => {
-                if (!e.latLng) return;
-                const nextLat = e.latLng.lat();
-                const nextLng = e.latLng.lng();
-                const updated = polygonVertices.map((vertex, i) =>
-                  i === idx ? { lat: nextLat, lng: nextLng } : vertex,
-                );
-                handlePolygonPathChange(updated);
-                setGeoStatus(`Moved Corner C${idx + 1}.`);
-              }}
-            >
-              <div
-                className={`px-1.5 py-0.5 rounded-[5px] text-[10px] font-mono font-bold shadow-lg border cursor-grab active:cursor-grabbing select-none ${
-                  overlappingParcels.length > 0
-                    ? 'bg-amber-400 border-[#020305] text-[#020305]'
-                    : 'bg-[#38BDF8] border-[#020305] text-[#020305]'
-                }`}
-              >
-                C{idx + 1}
-              </div>
-            </AdvancedMarker>
-          ))}
-
-          {/* Edge Dimension Labels on Map (e.g. 18.0 m, 36.0 m) */}
-          {polygonVertices.length >= 3 &&
-            polygonVertices.length <= 8 &&
-            edgeMeasurements.map((edge) => (
-              <AdvancedMarker
-                key={`edge-dim-${edge.fromIndex}-${edge.toIndex}`}
-                position={edge.midpoint}
-                zIndex={35}
-              >
-                <div className="pointer-events-none px-1.5 py-0.5 rounded-[4px] bg-[#020305]/90 border border-[#38BDF8]/50 text-[#67E8F9] font-mono text-[10px] font-semibold shadow-md whitespace-nowrap">
-                  {edge.lengthMeters.toFixed(1)} m
-                </div>
-              </AdvancedMarker>
-            ))}
-
-          {/* Parcel Center / Drop Pin Marker */}
-          {pinPosition && (
-            <AdvancedMarker
-              position={pinPosition}
-              draggable={true}
-              onDragEnd={(e) => {
-                if (!e.latLng) return;
-                const nextPt = { lat: e.latLng.lat(), lng: e.latLng.lng() };
-                const prevCenter = pinPosition;
-                setPinPosition(nextPt);
-                setCenterLatInput(nextPt.lat.toFixed(6));
-                setCenterLngInput(nextPt.lng.toFixed(6));
-
-                if (polygonVertices.length >= 3) {
-                  const dLat = nextPt.lat - prevCenter.lat;
-                  const dLng = nextPt.lng - prevCenter.lng;
-                  const shifted = polygonVertices.map((v) => ({
-                    lat: v.lat + dLat,
-                    lng: v.lng + dLng,
-                  }));
-                  handlePolygonPathChange(shifted);
-                  setGeoStatus('Moved land plot to new center pin location.');
-                }
-              }}
-              title="Land Center Pin (drag to move)"
-            >
-              <Pin
-                background="#38BDF8"
-                borderColor="#020305"
-                glyphColor="#020305"
-                scale={1.05}
-              />
-            </AdvancedMarker>
-          )}
-        </GoogleMap>
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <p className="text-xs font-bold text-[#F4F7FB] leading-snug">
+              {selectedExistingParcel.title}
+            </p>
+            <p className="text-[11px] text-[#94A3B8]">
+              {selectedExistingParcel.areaSqm.toLocaleString()} sqm · {selectedExistingParcel.state}
+            </p>
+          </div>
+        )}
 
         {/* Floating Guide Bar */}
-        <div className="pointer-events-none absolute bottom-3 left-3 right-14 flex flex-wrap items-center gap-2">
+        <div className="pointer-events-none absolute bottom-8 left-3 right-14 z-20 flex flex-wrap items-center gap-2">
           <div className="pointer-events-auto rounded-lg bg-[#020305]/85 backdrop-blur-md border border-[rgba(91,133,167,0.32)] px-3 py-1.5 text-[11px] text-[#E2E8F0]">
             {geoStatus ? (
               <span>{geoStatus}</span>
             ) : toolMode === 'draw_polygon' ? (
               <span>
                 <strong className="text-[#38BDF8]">Tap Corners:</strong> Click each corner of your
-                land on the map ({draftVertices.length} placed). Double-click or click{' '}
+                land on OpenMap ({draftVertices.length} placed). Double-click or click{' '}
                 <strong className="text-emerald-300">1</strong> to finish.
               </span>
             ) : toolMode === 'drop_pin' ? (
               <span>
-                <strong className="text-[#38BDF8]">Pin Mode:</strong> Click your land on the map, or enter 4 side sizes above to mark automatically.
+                <strong className="text-[#38BDF8]">Pin Mode:</strong> Click your land on OpenMap, or enter 4 side sizes above to mark automatically.
               </span>
             ) : (
               <span>
-                <strong className="text-[#38BDF8]">Edit Mode:</strong> Drag any corner badge (C1–C4) or drag inside the plot to adjust.
+                <strong className="text-[#38BDF8]">Edit Mode:</strong> Drag any corner badge (C1–C4) or drag the center pin to adjust.
               </span>
             )}
           </div>
         </div>
       </div>
 
-      {/* Live Spatial Summary (Clean Hairline Telemetry Strip) */}
+      {/* Live Spatial Summary */}
       <div className="rounded-[10px] bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[rgba(91,133,167,0.14)]">
           <div className="flex items-center gap-2 text-xs font-medium text-[#38BDF8]">
             <Ruler className="h-4 w-4" />
-            <span>Measured Land Size &amp; Overlap Check (Auto-Filled)</span>
+            <span>Measured Land Size &amp; GIS Overlap Check (Auto-Filled)</span>
           </div>
 
           {polygonVertices.length >= 3 && (
-            <button
-              type="button"
-              onClick={handleCopyGeoJson}
-              className="px-2.5 py-1 rounded-md bg-[#0A0F16] border border-[rgba(91,133,167,0.22)] text-[11px] font-mono text-[#94A3B8] hover:text-[#67E8F9] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
-            >
-              {geoJsonCopied ? (
-                <>
-                  <Check className="h-3.5 w-3.5 text-emerald-400" />
-                  <span className="text-emerald-400">GeoJSON Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-3.5 w-3.5" />
-                  <span>Copy GeoJSON</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCopyGeoJson}
+                className="px-2.5 py-1 rounded-md bg-[#0A0F16] border border-[rgba(91,133,167,0.22)] text-[11px] font-mono text-[#94A3B8] hover:text-[#67E8F9] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                {geoJsonCopied ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="text-emerald-400">GeoJSON Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5" />
+                    <span>Copy GeoJSON</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadGeoJson}
+                className="px-2.5 py-1 rounded-md bg-[#0A0F16] border border-[rgba(91,133,167,0.22)] text-[11px] font-mono text-[#94A3B8] hover:text-[#67E8F9] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>.geojson</span>
+              </button>
+            </div>
           )}
         </div>
 
@@ -1749,7 +1565,9 @@ function LandGisMapperInner({
           <div>
             <p className="text-[11px] text-[#64748B]">Measured Land Size</p>
             <p className="font-mono font-bold text-[#F4F7FB] mt-0.5 tabular-nums text-sm">
-              {measurements.areaSqm ? `${measurements.areaSqm.toLocaleString()} sqm` : 'Not measured yet'}
+              {measurements.areaSqm
+                ? `${measurements.areaSqm.toLocaleString()} sqm`
+                : 'Not measured yet'}
             </p>
             {equivalents && (
               <p className="text-[11px] font-mono text-[#38BDF8] mt-0.5 tabular-nums">
@@ -1775,7 +1593,7 @@ function LandGisMapperInner({
           <div>
             <p className="text-[11px] text-[#64748B]">GPS Position &amp; Overlap Status</p>
             <p className="font-mono font-medium text-[#F4F7FB] mt-0.5 truncate text-xs">
-              {measurements.coordinates || 'Search location or tap map above'}
+              {measurements.coordinates || 'Search location or tap OpenMap above'}
             </p>
             <div className="mt-1 flex items-center gap-1.5 text-[11px]">
               {overlappingParcels.length > 0 ? (
@@ -1796,13 +1614,5 @@ function LandGisMapperInner({
         </div>
       </div>
     </div>
-  );
-}
-
-export function LandGisMapper(props: LandGisMapperProps) {
-  return (
-    <GoogleMapsShell fallbackHeightClass="h-[460px]">
-      <LandGisMapperInner {...props} />
-    </GoogleMapsShell>
   );
 }

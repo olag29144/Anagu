@@ -487,6 +487,11 @@ export default function StandaloneAdminPage() {
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
                         Owner: <span className="text-slate-300">{parcel.ownerName}</span> ({parcel.ownerEmail} · {parcel.ownerPhone})
+                        {parcel.ownerWalletAddress && (
+                          <span className="ml-2 font-mono text-indigo-300">
+                            · ETH: {parcel.ownerWalletAddress.slice(0, 6)}…{parcel.ownerWalletAddress.slice(-4)}
+                          </span>
+                        )}
                       </p>
                     </div>
 
@@ -674,6 +679,12 @@ export default function StandaloneAdminPage() {
                         </td>
                         <td className="px-5 py-4">
                           <p className="text-slate-300">{order.paymentMethod}</p>
+                          {order.walletAddress && (
+                            <p className="font-mono text-[11px] text-indigo-300 mt-0.5">
+                              {order.walletName ? `${order.walletName}: ` : ''}
+                              {order.walletAddress.slice(0, 6)}…{order.walletAddress.slice(-4)}
+                            </p>
+                          )}
                           <p
                             className={`font-mono mt-0.5 ${
                               order.status === 'completed' ? 'text-emerald-400' : 'text-amber-400'

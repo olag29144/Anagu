@@ -27,6 +27,7 @@ export interface LandListing {
   ownerName: string;
   ownerEmail: string;
   ownerPhone: string;
+  ownerWalletAddress?: string;
   state: string;
   location: string;
   areaSqm: number;
@@ -48,6 +49,13 @@ export interface LandListing {
   createdAt: string;
 }
 
+export type PurchasePaymentMethod =
+  | 'Web3 Wallet Signature (EIP-191)'
+  | 'Web3 Wallet On-Chain Escrow'
+  | 'Bank Escrow Transfer'
+  | 'Mortgage Financing'
+  | 'Direct Institutional Settlement';
+
 export interface LandPurchaseOrder {
   id: string;
   landId: string;
@@ -57,7 +65,12 @@ export interface LandPurchaseOrder {
   buyerName: string;
   buyerEmail: string;
   buyerPhone: string;
-  paymentMethod: 'Bank Escrow Transfer' | 'Mortgage Financing' | 'Direct Institutional Settlement';
+  paymentMethod: PurchasePaymentMethod;
+  walletAddress?: string;
+  walletName?: string;
+  walletChainName?: string;
+  walletSignature?: string;
+  walletTxHash?: string;
   notes: string;
   status: 'pending_settlement' | 'completed';
   createdAt: string;

@@ -1,10 +1,8 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useMapsLibrary } from '@vis.gl/react-google-maps';
+import React, { useEffect, useRef, useState } from 'react';
 import { Search, Loader2, MapPin, X } from 'lucide-react';
-import { triggerQuotaWarningIfNeeded } from './MapsContextProvider';
-import { matchNigerianState } from '@/lib/gis-utils';
+import { NIGERIA_GIS_HUBS, matchNigerianState } from '@/lib/gis-utils';
 
 export interface SelectedPlaceResult {
   lat: number;
@@ -12,7 +10,34 @@ export interface SelectedPlaceResult {
   formattedAddress: string;
   displayName: string;
   matchedState: string | null;
-  viewport?: google.maps.LatLngBounds | null;
+  boundingBox?: [[number, number], [number, number]] | null;
+}
+
+interface PlaceSuggestion {
+  id: string;
+  displayName: string;
+  formattedAddress: string;
+  lat: number;
+  lng: number;
+  matchedState: string | null;
+  boundingBox?: [[number, number], [number, number]] | null;
+  source: 'hub' | 'osm';
+}
+
+interface NominatimItem {
+  place_id: number;
+  display_name: string;
+  name?: string;
+  lat: string;
+  lon: string;
+  boundingbox?: [string, string, string, string];
+  address?: {
+    state?: string;
+    city?: string;
+    town?: string;
+    suburb?: string;
+    road?: string;
+  };
 }
 
 interface PlaceSearchBoxProps {
@@ -24,11 +49,8 @@ export function PlaceSearchBox({
   onPlaceSelect,
   placeholder = 'Search Nigerian street, estate, LGA, or landmark (e.g. Lekki Phase 1, Maitama)...',
 }: PlaceSearchBoxProps) {
-  const placesLib = useMapsLibrary('places');
-  const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
-
   const [inputValue, setInputValue] = useState('');
-  const [suggestions, setSuggestions] = useState<google.maps.places.AutocompleteSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -46,90 +68,148 @@ export function PlaceSearchBox({
 
   useEffect(() => {
     const trimmed = inputValue.trim();
-    if (!placesLib || trimmed.length < 2) {
+    if (trimmed.length < 2) {
       setSuggestions([]);
       setIsLoading(false);
+      setSearchError(null);
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      const { AutocompleteSessionToken, AutocompleteSuggestion } = placesLib;
-      if (!sessionTokenRef.current) {
-        sessionTokenRef.current = new AutocompleteSessionToken();
-      }
+    const qLower = trimmed.toLowerCase();
+    const localMatches: PlaceSuggestion[] = NIGERIA_GIS_HUBS.filter(
+      (hub) =>
+        hub.label.toLowerCase().includes(qLower) ||
+        hub.state.toLowerCase().includes(qLower),
+    ).map((hub) => ({
+      id: `hub-${hub.label}`,
+      displayName: hub.label,
+      formattedAddress: `${hub.label}, ${hub.state}, Nigeria`,
+      lat: hub.center.lat,
+      lng: hub.center.lng,
+      matchedState: hub.state,
+      boundingBox: null,
+      source: 'hub',
+    }));
 
-      setIsLoading(true);
-      setSearchError(null);
+    if (localMatches.length > 0) {
+      setSuggestions(localMatches);
+      setIsOpen(true);
+    }
 
-      const request: google.maps.places.AutocompleteRequest = {
-        input: trimmed,
-        sessionToken: sessionTokenRef.current,
-        includedRegionCodes: ['ng'],
-      };
-
-      AutocompleteSuggestion.fetchAutocompleteSuggestions(request)
-        .then((res) => {
-          setSuggestions(res?.suggestions ?? []);
-          setIsOpen(true);
-          setIsLoading(false);
-        })
-        .catch((err: unknown) => {
-          setIsLoading(false);
-          setSuggestions([]);
-          if (!triggerQuotaWarningIfNeeded(err)) {
-            setSearchError('Place suggestions temporarily unavailable.');
-          }
-        });
-    }, 240);
-
-    return () => window.clearTimeout(timer);
-  }, [placesLib, inputValue]);
-
-  const handleSelect = useCallback(
-    async (suggestion: google.maps.places.AutocompleteSuggestion) => {
-      if (!placesLib || !suggestion.placePrediction) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
       setIsLoading(true);
       setSearchError(null);
 
       try {
-        const place = suggestion.placePrediction.toPlace();
-        await place.fetchFields({
-          fields: ['displayName', 'formattedAddress', 'location', 'viewport'],
+        const url = new URL('https://nominatim.openstreetmap.org/search');
+        url.searchParams.set('format', 'jsonv2');
+        url.searchParams.set('addressdetails', '1');
+        url.searchParams.set('countrycodes', 'ng');
+        url.searchParams.set('limit', '6');
+        url.searchParams.set('q', trimmed);
+
+        const res = await fetch(url.toString(), {
+          signal: controller.signal,
+          headers: {
+            Accept: 'application/json',
+          },
         });
 
-        const loc = place.location;
-        if (loc) {
-          const formattedAddress =
-            place.formattedAddress ||
-            suggestion.placePrediction.text?.text ||
-            place.displayName ||
-            '';
-          const displayName = place.displayName || formattedAddress;
-          const matchedState = matchNigerianState(formattedAddress);
-
-          onPlaceSelect({
-            lat: loc.lat(),
-            lng: loc.lng(),
-            formattedAddress,
-            displayName,
-            matchedState,
-            viewport: place.viewport ?? null,
-          });
-          setInputValue(formattedAddress);
+        if (!res.ok) {
+          throw new Error(`OpenStreetMap geocoder returned ${res.status}`);
         }
-      } catch (err: unknown) {
-        if (!triggerQuotaWarningIfNeeded(err)) {
-          setSearchError('Could not load coordinates for this location.');
+
+        const data = (await res.json()) as NominatimItem[];
+        const osmResults: PlaceSuggestion[] = (Array.isArray(data) ? data : [])
+          .map((item) => {
+            const lat = parseFloat(item.lat);
+            const lng = parseFloat(item.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+            let boundingBox: [[number, number], [number, number]] | null = null;
+            if (Array.isArray(item.boundingbox) && item.boundingbox.length === 4) {
+              const south = parseFloat(item.boundingbox[0]);
+              const north = parseFloat(item.boundingbox[1]);
+              const west = parseFloat(item.boundingbox[2]);
+              const east = parseFloat(item.boundingbox[3]);
+              if (
+                Number.isFinite(south) &&
+                Number.isFinite(north) &&
+                Number.isFinite(west) &&
+                Number.isFinite(east)
+              ) {
+                boundingBox = [
+                  [south, west],
+                  [north, east],
+                ];
+              }
+            }
+
+            const stateHint = item.address?.state || item.display_name;
+            const matchedState = matchNigerianState(stateHint);
+
+            const suggestion: PlaceSuggestion = {
+              id: `osm-${item.place_id}`,
+              displayName:
+                item.name ||
+                item.address?.suburb ||
+                item.address?.town ||
+                item.address?.city ||
+                item.display_name.split(',')[0] ||
+                'Location',
+              formattedAddress: item.display_name,
+              lat,
+              lng,
+              matchedState,
+              boundingBox,
+              source: 'osm',
+            };
+            return suggestion;
+          })
+          .filter((item): item is PlaceSuggestion => Boolean(item));
+
+        const combined = [...localMatches];
+        for (const osmItem of osmResults) {
+          const duplicate = combined.some(
+            (existing) =>
+              Math.abs(existing.lat - osmItem.lat) < 0.005 &&
+              Math.abs(existing.lng - osmItem.lng) < 0.005,
+          );
+          if (!duplicate) combined.push(osmItem);
+        }
+
+        setSuggestions(combined);
+        setIsOpen(combined.length > 0);
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        if (localMatches.length === 0) {
+          setSearchError('OpenStreetMap search temporarily unavailable. Use quick area buttons or tap the map.');
         }
       } finally {
-        sessionTokenRef.current = null;
-        setSuggestions([]);
-        setIsOpen(false);
         setIsLoading(false);
       }
-    },
-    [placesLib, onPlaceSelect],
-  );
+    }, 320);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [inputValue]);
+
+  const handleSelect = (item: PlaceSuggestion) => {
+    onPlaceSelect({
+      lat: item.lat,
+      lng: item.lng,
+      formattedAddress: item.formattedAddress,
+      displayName: item.displayName,
+      matchedState: item.matchedState,
+      boundingBox: item.boundingBox ?? null,
+    });
+    setInputValue(item.formattedAddress);
+    setSuggestions([]);
+    setIsOpen(false);
+  };
 
   return (
     <div ref={containerRef} className="relative w-full">
@@ -146,7 +226,7 @@ export function PlaceSearchBox({
             if (suggestions.length > 0) setIsOpen(true);
           }}
           placeholder={placeholder}
-          aria-label="Search land address or neighborhood"
+          aria-label="Search land address or neighborhood on OpenStreetMap"
           className="w-full h-11 pl-10 pr-10 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-sm text-[#F4F7FB] placeholder-[#64748B] focus:border-[#38BDF8] focus:outline-none"
         />
         {isLoading ? (
@@ -174,22 +254,24 @@ export function PlaceSearchBox({
       )}
 
       {isOpen && suggestions.length > 0 && (
-        <ul className="absolute z-40 mt-1.5 w-full rounded-[10px] bg-[#0A0F16] border border-[rgba(91,133,167,0.35)] shadow-2xl overflow-hidden divide-y divide-[rgba(91,133,167,0.14)] max-h-64 overflow-y-auto">
-          {suggestions.map((suggestion, idx) => {
-            const label = suggestion.placePrediction?.text?.text || 'Unnamed location';
-            return (
-              <li key={suggestion.placePrediction?.placeId || idx}>
-                <button
-                  type="button"
-                  onClick={() => void handleSelect(suggestion)}
-                  className="w-full px-3.5 py-2.5 text-left text-xs text-[#E2E8F0] hover:bg-[#38BDF8]/15 hover:text-[#F4F7FB] flex items-start gap-2.5 transition-colors"
-                >
+        <ul className="absolute z-[1200] mt-1.5 w-full rounded-[10px] bg-[#0A0F16] border border-[rgba(91,133,167,0.35)] shadow-2xl overflow-hidden divide-y divide-[rgba(91,133,167,0.14)] max-h-64 overflow-y-auto">
+          {suggestions.map((suggestion) => (
+            <li key={suggestion.id}>
+              <button
+                type="button"
+                onClick={() => handleSelect(suggestion)}
+                className="w-full px-3.5 py-2.5 text-left text-xs text-[#E2E8F0] hover:bg-[#38BDF8]/15 hover:text-[#F4F7FB] flex items-start justify-between gap-2.5 transition-colors"
+              >
+                <div className="flex items-start gap-2.5 min-w-0">
                   <MapPin className="h-3.5 w-3.5 text-[#38BDF8] shrink-0 mt-0.5" />
-                  <span className="leading-snug">{label}</span>
-                </button>
-              </li>
-            );
-          })}
+                  <span className="leading-snug">{suggestion.formattedAddress}</span>
+                </div>
+                <span className="text-[10px] font-mono text-[#64748B] shrink-0 mt-0.5">
+                  {suggestion.source === 'hub' ? 'GIS Hub' : 'OSM'}
+                </span>
+              </button>
+            </li>
+          ))}
         </ul>
       )}
     </div>
