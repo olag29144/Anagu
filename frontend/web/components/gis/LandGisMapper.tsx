@@ -1,14 +1,31 @@
 ﻿'use client';
+import GISMap from './GISMap';
+
+interface LatLngPoint {
+  lat: number;
+  lng: number;
+}
 
 export interface GisMeasurementPayload {
-  points: any[];
+  points: LatLngPoint[];
   areaSqMeters: number;
 }
 
-export default function LandGisMapper() {
+interface LandGisMapperProps {
+  onBoundaryComplete?: (points: LatLngPoint[]) => void;
+  initialBoundary?: LatLngPoint[];
+}
+
+export default function LandGisMapper({ onBoundaryComplete, initialBoundary = [] }: LandGisMapperProps) {
   return (
-    <div className="w-full h-[600px] bg-gray-200 rounded-lg flex items-center justify-center">
-      <p className="text-gray-600">Land GIS Mapper - Coming Soon</p>
+    <div className="space-y-4">
+      <h2 className="text-xl font-bold">Draw Land Parcel Boundary</h2>
+      <GISMap 
+        center={[8.9328677, 11.336599]} 
+        zoom={15}
+        onBoundaryDraw={onBoundaryComplete}
+        existingBoundary={initialBoundary}
+      />
     </div>
   );
 }
