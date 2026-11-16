@@ -2,20 +2,9 @@
 
 import { useState, FormEvent } from 'react';
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
 import { apiCall } from '@/lib/api';
 import { PortalHeader } from '@/components/portal-header';
 import { CheckCircle2, ArrowLeft, Sparkles, MapPin, FileText, User } from 'lucide-react';
-
-// Dynamically import the map to avoid SSR issues
-const ParcelMap = dynamic(() => import('@/components/ParcelMap'), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-[500px] bg-[#05080D] border border-[#1E293B] rounded-lg flex items-center justify-center">
-      <p className="text-xs text-[#64748B]">Loading map...</p>
-    </div>
-  ),
-});
 
 interface SubmitApplicationResponse {
   id: string;
@@ -35,18 +24,6 @@ export default function SubmitApplicationPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applicationId, setApplicationId] = useState<string | null>(null);
-  const [showMap, setShowMap] = useState(false);
-
-  // Handle boundary drawn from map
-  const handleBoundaryDrawn = (wkt: string, coordinates: [number, number][]) => {
-    // Convert coordinates to the format expected by the backend
-    const formattedCoords = coordinates.map(([lat, lng]) => [lng, lat]);
-    setFields((prev) => ({
-      ...prev,
-      parcelCoordinates: JSON.stringify(formattedCoords, null, 2),
-    }));
-    setShowMap(false);
-  };
 
   // Helper to pre-populate valid Nigerian cadastral parcel coordinates & details
   const handleAutoFillCadastralSample = () => {
@@ -127,7 +104,7 @@ export default function SubmitApplicationPage() {
     <div className="min-h-screen bg-[#020305] text-[#F4F7FB]">
       <PortalHeader currentRoleTitle="Submit Land Title Application" />
 
-      <main className="mx-auto max-w-5xl px-4 py-8">
+      <main className="mx-auto max-w-3xl px-4 py-8">
         <div className="mb-6 flex items-center justify-between">
           <Link
             href="/citizen"
@@ -312,29 +289,6 @@ export default function SubmitApplicationPage() {
                       className="w-full h-10 px-3 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs font-mono text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
                     />
                   </div>
-
-                  {/* Interactive Map Toggle */}
-                  <div className="flex items-center justify-between bg-[#05080D] border border-[#1E293B] rounded-lg p-3">
-                    <div>
-                      <p className="text-xs font-mono text-[#F4F7FB]">Draw Parcel on Interactive Map</p>
-                      <p className="text-[11px] text-[#64748B] mt-0.5">Click to open map and draw your parcel boundary</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowMap(!showMap)}
-                      className="px-4 py-2 rounded-lg bg-[#38BDF8]/10 text-[#38BDF8] border border-[#38BDF8]/30 hover:bg-[#38BDF8]/20 text-xs font-mono transition-all"
-                    >
-                      {showMap ? 'Hide Map' : 'Open Map'}
-                    </button>
-                  </div>
-
-                  {/* Map Component */}
-                  {showMap && (
-                    <div className="h-[500px] rounded-lg overflow-hidden border border-[#1E293B]">
-                      <ParcelMap onBoundaryDrawn={handleBoundaryDrawn} center={[6.4421, 3.5284]} zoom={15} />
-                    </div>
-                  )}
-
                   <div>
                     <label htmlFor="parcelCoordinates" className="block text-xs font-mono text-[#94A3B8] mb-1">
                       Polygon Boundary Ring (WGS 84, EPSG:4326) <span className="text-rose-400">*</span>
@@ -350,7 +304,7 @@ export default function SubmitApplicationPage() {
                       className="w-full px-3 py-2 rounded-lg bg-[#05080D] border border-[#1E293B] text-xs font-mono text-[#38BDF8] focus:border-[#38BDF8] focus:outline-none"
                     />
                     <p className="mt-1 text-[11px] text-[#64748B] font-mono">
-                      First and last point must match to close boundary polygon. Or use the interactive map above.
+                      First and last point must match to close boundary polygon.
                     </p>
                   </div>
                 </div>

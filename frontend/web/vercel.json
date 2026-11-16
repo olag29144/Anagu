@@ -1,5 +1,7 @@
 {
-  "buildCommand": "npm run build",
-  "framework": "nextjs",
-  "cleanUrls": true
+    "buildCommand":  "npm run build",
+    "installCommand":  "npm install",
+    "name":  "anagu-web",
+    "version":  2,
+    "framework":  "nextjs"
 }

@@ -187,26 +187,48 @@ export function saveStoredTitles(titles: typeof INITIAL_TITLES) {
 export function getActiveDemoAccount(): DemoAccount | null {
   if (typeof window === 'undefined') return null;
   const cookieMatch = document.cookie.match(/anagu_demo_role=([^;]+)/);
-  const role = cookieMatch ? decodeURIComponent(cookieMatch[1]) : null;
+  let role = cookieMatch ? decodeURIComponent(cookieMatch[1]) : null;
+  if (!role) {
+    try {
+      role = localStorage.getItem('anagu_demo_role');
+    } catch {
+      role = null;
+    }
+  }
   if (!role) return null;
   return DEMO_ACCOUNTS.find((a) => a.role === role) ?? DEMO_ACCOUNTS[0];
+}
+
+function getCookieAttributes(maxAge: number): string {
+  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  return isHttps
+    ? `path=/; max-age=${maxAge}; SameSite=None; Secure`
+    : `path=/; max-age=${maxAge}; SameSite=Lax`;
 }
 
 export function setDemoSession(account: DemoAccount) {
   if (typeof window === 'undefined') return;
   const maxAge = 86400 * 7; // 7 days
-  document.cookie = `anagu_demo_role=${account.role}; path=/; max-age=${maxAge}; SameSite=Lax`;
-  document.cookie = `anagu_demo_user=${encodeURIComponent(account.email)}; path=/; max-age=${maxAge}; SameSite=Lax`;
-  document.cookie = `anagu_demo_name=${encodeURIComponent(account.name)}; path=/; max-age=${maxAge}; SameSite=Lax`;
+  const attrs = getCookieAttributes(maxAge);
+  document.cookie = `anagu_demo_role=${account.role}; ${attrs}`;
+  document.cookie = `anagu_demo_user=${encodeURIComponent(account.email)}; ${attrs}`;
+  document.cookie = `anagu_demo_name=${encodeURIComponent(account.name)}; ${attrs}`;
+  try {
+    localStorage.setItem('anagu_demo_role', account.role);
+  } catch {
+    // Ignore storage error
+  }
 }
 
 export function clearDemoSession() {
   if (typeof window === 'undefined') return;
-  document.cookie = 'anagu_demo_role=; path=/; max-age=0';
-  document.cookie = 'anagu_demo_user=; path=/; max-age=0';
-  document.cookie = 'anagu_demo_name=; path=/; max-age=0';
+  const attrs = getCookieAttributes(0);
+  document.cookie = `anagu_demo_role=; ${attrs}`;
+  document.cookie = `anagu_demo_user=; ${attrs}`;
+  document.cookie = `anagu_demo_name=; ${attrs}`;
   try {
     localStorage.removeItem('anagu_demo_session');
+    localStorage.removeItem('anagu_demo_role');
   } catch {
     // Ignore
   }
@@ -214,6 +236,7 @@ export function clearDemoSession() {
 
 interface MockQueryBuilder<T> {
   select: (cols?: string) => MockQueryBuilder<T>;
+  insert: (rows: unknown) => Promise<{ data: null; error: null }>;
   eq: (col: string, val: unknown) => MockQueryBuilder<T>;
   in: (col: string, vals: unknown[]) => MockQueryBuilder<T>;
   order: (col: string, opts?: { ascending?: boolean }) => MockQueryBuilder<T>;
@@ -228,6 +251,9 @@ function createMockQuery<T extends Record<string, unknown>>(dataList: T[]): Mock
   const builder: MockQueryBuilder<T> = {
     select() {
       return builder;
+    },
+    async insert() {
+      return { data: null, error: null };
     },
     eq(col, val) {
       filtered = filtered.filter((item) => String(item[col]) === String(val));
@@ -387,7 +413,13 @@ export function createClient() {
           };
         }
 
-        // Otherwise try real Supabase
+        // Otherwise try real Supabase if configured
+        if (url.includes('placeholder.supabase.co')) {
+          return {
+            data: { user: null, session: null },
+            error: new Error('Use one of the demo accounts or configure Supabase environment variables.'),
+          };
+        }
         try {
           return await realClient!.auth.signInWithPassword({ email, password: password || '' });
         } catch (err) {
@@ -395,6 +427,57 @@ export function createClient() {
             data: { user: null, session: null },
             error: new Error(
               err instanceof Error ? err.message : 'Authentication failed. Try using a demo account.',
+            ),
+          };
+        }
+      },
+      async signUp({
+        email,
+        password,
+        options,
+      }: {
+        email: string;
+        password: string;
+        options?: { data?: Record<string, unknown> };
+      }) {
+        if (url.includes('placeholder.supabase.co')) {
+          const requestedRole = String(options?.data?.role ?? 'citizen').toLowerCase();
+          const baseAccount =
+            DEMO_ACCOUNTS.find((a) => a.role === requestedRole) ?? DEMO_ACCOUNTS[0];
+          const demoAccount: DemoAccount = {
+            ...baseAccount,
+            email: email.trim(),
+            name: String(options?.data?.full_name ?? baseAccount.name),
+          };
+          setDemoSession(demoAccount);
+          const demoUser = {
+            id: `demo-user-${demoAccount.role}`,
+            email: demoAccount.email,
+            app_metadata: { role: demoAccount.role },
+            user_metadata: {
+              ...options?.data,
+              role: demoAccount.role,
+              full_name: demoAccount.name,
+            },
+          };
+          return {
+            data: {
+              user: demoUser,
+              session: {
+                access_token: 'mock-jwt-token-' + demoAccount.role,
+                user: demoUser,
+              },
+            },
+            error: null,
+          };
+        }
+        try {
+          return await realClient!.auth.signUp({ email, password, options });
+        } catch (err) {
+          return {
+            data: { user: null, session: null },
+            error: new Error(
+              err instanceof Error ? err.message : 'Registration failed.',
             ),
           };
         }

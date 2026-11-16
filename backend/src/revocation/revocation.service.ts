@@ -116,4 +116,104 @@ export class RevocationService {
     // Step 6 — Out-of-band notification (stub)
     await this.notificationService.notifyRevocation(tokenId, ground);
   }
+
+  /**
+   * Perform a registry-controlled title transfer via LandRegistry.registryTransfer().
+   */
+  async transferTitle(
+    tokenId: string,
+    toWallet: string,
+    registrarId: string,
+    newOwnerId?: string,
+  ): Promise<{
+    oldTokenId: string;
+    newTokenId: string;
+    from: string;
+    to: string;
+    txHash: string;
+  }> {
+    if (!/^[1-9]\d*$/.test(tokenId)) {
+      throw new BadRequestException('tokenId must be a positive integer');
+    }
+
+    if (!/^0x[0-9a-fA-F]{40}$/.test(toWallet)) {
+      throw new BadRequestException('toWallet must be a valid EVM address');
+    }
+
+    const tokenIdBigInt = BigInt(tokenId);
+    const revoked = await this.blockchainService.isRevoked(tokenIdBigInt);
+    if (revoked) {
+      throw new BadRequestException('Cannot transfer a statutorily revoked title');
+    }
+
+    const fromWallet = await this.blockchainService.ownerOf(tokenIdBigInt);
+    const transferResult = await this.blockchainService.registryTransfer(
+      tokenIdBigInt,
+      fromWallet,
+      toWallet,
+    );
+
+    const newTokenIdStr = transferResult.newTokenId.toString();
+
+    const { error: titleError } = await this.supabase.raw
+      .from('land_titles')
+      .update({
+        token_id: newTokenIdStr,
+        tx_hash: transferResult.txHash,
+        ...(newOwnerId !== undefined && { owner_id: newOwnerId }),
+      })
+      .eq('token_id', tokenId);
+
+    if (titleError) {
+      throw new Error(`Failed to update land_titles on transfer: ${titleError.message}`);
+    }
+
+    const { data: parcelRows, error: parcelError } = await this.supabase.raw
+      .from('parcels')
+      .update({ token_id: newTokenIdStr })
+      .eq('token_id', tokenId)
+      .select('id');
+
+    if (parcelError) {
+      throw new Error(`Failed to update parcels on transfer: ${parcelError.message}`);
+    }
+
+    const parcelId =
+      Array.isArray(parcelRows) && parcelRows.length > 0
+        ? String((parcelRows[0] as { id: string }).id)
+        : tokenId;
+
+    await this.auditService.record({
+      entityId: tokenId,
+      actorId: registrarId,
+      action: 'REGISTRY_TRANSFER',
+      outcome: 'TRANSFERRED',
+      metadata: {
+        oldTokenId: tokenId,
+        newTokenId: newTokenIdStr,
+        from: fromWallet,
+        to: toWallet,
+        txHash: transferResult.txHash,
+      },
+    });
+
+    await this.mqttService.publish(
+      MQTT_TOPICS.TITLE_ISSUED.topic,
+      {
+        tokenId: newTokenIdStr,
+        owner: toWallet,
+        parcelId,
+        timestamp: new Date().toISOString(),
+      },
+      MQTT_TOPICS.TITLE_ISSUED.qos,
+    );
+
+    return {
+      oldTokenId: tokenId,
+      newTokenId: newTokenIdStr,
+      from: fromWallet,
+      to: toWallet,
+      txHash: transferResult.txHash,
+    };
+  }
 }

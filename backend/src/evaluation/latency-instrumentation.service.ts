@@ -10,6 +10,14 @@ export interface StageTiming {
   T_total: number;
 }
 
+export interface StageHooks {
+  gisVerify?: () => Promise<unknown>;
+  oracleVerify?: () => Promise<unknown>;
+  executeSmartContract?: () => Promise<unknown>;
+  issueNFT?: () => Promise<unknown>;
+  publishMQTT?: () => Promise<unknown>;
+}
+
 export interface BenchmarkStats {
   mean: number;
   sd: number;
@@ -48,25 +56,25 @@ export class LatencyInstrumentationService {
    * Simulate one complete timed registration transaction through all five stages.
    * Returns the wall-clock time (ms) for each stage and the cumulative total.
    */
-  async timedRegistration(): Promise<StageTiming> {
+  async timedRegistration(hooks?: StageHooks): Promise<StageTiming> {
     const t0 = performance.now();
-    await this.simulateStage(50); // GIS spatial verification ~50 ms
+    await (hooks?.gisVerify ? hooks.gisVerify() : this.simulateStage(50)); // GIS spatial verification
     const t_gis = performance.now() - t0;
 
     const t1 = performance.now();
-    await this.simulateStage(30); // Oracle ownership check ~30 ms
+    await (hooks?.oracleVerify ? hooks.oracleVerify() : this.simulateStage(30)); // Oracle ownership check
     const t_oracle = performance.now() - t1;
 
     const t2 = performance.now();
-    await this.simulateStage(120); // Smart contract execution ~120 ms
+    await (hooks?.executeSmartContract ? hooks.executeSmartContract() : this.simulateStage(120)); // Smart contract execution
     const t_contract = performance.now() - t2;
 
     const t3 = performance.now();
-    await this.simulateStage(80); // NFT issuance ~80 ms
+    await (hooks?.issueNFT ? hooks.issueNFT() : this.simulateStage(80)); // NFT issuance
     const t_nft = performance.now() - t3;
 
     const t4 = performance.now();
-    await this.simulateStage(10); // MQTT synchronisation ~10 ms
+    await (hooks?.publishMQTT ? hooks.publishMQTT() : this.simulateStage(10)); // MQTT synchronisation
     const t_sync = performance.now() - t4;
 
     return {
@@ -83,11 +91,18 @@ export class LatencyInstrumentationService {
    * Run `n` timed registrations and compute mean ± standard deviation per stage.
    * Requirement 10.3 mandates at least 30 runs.
    */
-  async runLatencyBenchmark(n = 30): Promise<LatencyBenchmarkResult> {
+  async runLatencyBenchmark(
+    n = 30,
+    hooksFactory?: () => StageHooks,
+  ): Promise<LatencyBenchmarkResult> {
     this.assertRunCount(n);
     const timings: StageTiming[] = [];
     for (let i = 0; i < n; i++) {
-      timings.push(await this.timedRegistration());
+      timings.push(
+        hooksFactory
+          ? await this.timedRegistration(hooksFactory())
+          : await this.timedRegistration(),
+      );
     }
 
     return {
@@ -101,6 +116,22 @@ export class LatencyInstrumentationService {
         T_total: this.stats(timings.map((r) => r.T_total)),
       },
     };
+  }
+
+  computeImprovementPercentage(
+    proposedMeanMs: number,
+    baselineMeanMs: number,
+  ): number {
+    if (
+      !Number.isFinite(proposedMeanMs) ||
+      !Number.isFinite(baselineMeanMs) ||
+      baselineMeanMs <= 0
+    ) {
+      return 0;
+    }
+
+    const improvement = ((baselineMeanMs - proposedMeanMs) / baselineMeanMs) * 100;
+    return Number(improvement.toFixed(2));
   }
 
   /**

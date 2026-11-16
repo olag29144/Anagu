@@ -14,37 +14,38 @@ export async function apiCall<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
-  const backendUrl =
-    process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
 
-  const supabase = createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  if (backendUrl) {
+    const supabase = createClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options?.headers as Record<string, string>),
-  };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options?.headers as Record<string, string>),
+    };
 
-  if (session?.access_token) {
-    headers['Authorization'] = 'Bearer ' + session.access_token;
-  }
-
-  try {
-    const response = await fetch(backendUrl + path, {
-      ...options,
-      headers,
-    });
-
-    if (response.ok) {
-      if (response.status === 204) {
-        return undefined as unknown as T;
-      }
-      return response.json() as Promise<T>;
+    if (session?.access_token) {
+      headers['Authorization'] = 'Bearer ' + session.access_token;
     }
-  } catch {
-    // Backend offline / not reachable — fall through to demo mock handler
+
+    try {
+      const response = await fetch(backendUrl + path, {
+        ...options,
+        headers,
+      });
+
+      if (response.ok) {
+        if (response.status === 204) {
+          return undefined as unknown as T;
+        }
+        return response.json() as Promise<T>;
+      }
+    } catch {
+      // Backend offline / not reachable — fall through to demo mock handler
+    }
   }
 
   // Demo Fallback Simulation

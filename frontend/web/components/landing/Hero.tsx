@@ -3,12 +3,7 @@
 import Link from 'next/link';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 
-interface HeroProps {
-  onExploreClick?: () => void;
-  onVerifyClick?: () => void;
-}
-
-export function Hero({ onExploreClick }: HeroProps) {
+export function Hero() {
   return (
     <section id="overview" className="relative pt-36 pb-20 sm:pt-44 sm:pb-28 lg:pt-48 lg:pb-32 overflow-hidden">
       {/* Centered Atmospheric Radial Glow Layer */}
@@ -50,24 +45,23 @@ export function Hero({ onExploreClick }: HeroProps) {
             Secure, tamper-evident land titles backed by statutory governance and immutable blockchain verification.
           </p>
 
-          {/* Two Centered Action Buttons: Register & Explore */}
+          {/* Two Centered Action Buttons: Register Land & Explore Land */}
           <div className="relative z-10 flex flex-wrap items-center justify-center gap-4 w-full sm:w-auto">
             <Link
               href="/register"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-12 px-8 rounded-lg bg-[#38BDF8] text-[#020305] text-[15px] font-semibold border border-[rgba(103,232,249,0.45)] hover:bg-[#67E8F9] hover:shadow-[0_0_24px_rgba(56,189,248,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38BDF8] transition-all duration-200 active:scale-[0.98]"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-12 px-8 rounded-lg bg-[#38BDF8] text-[#020305] text-[15px] font-semibold border border-[rgba(103,232,249,0.45)] hover:bg-[#67E8F9] hover:shadow-[0_0_24px_rgba(56,189,248,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38BDF8] transition-all duration-200 active:scale-[0.98] whitespace-nowrap shrink-0"
             >
-              <span>Register</span>
+              <span>Register Land</span>
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
 
-            <button
-              type="button"
-              onClick={onExploreClick}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-12 px-8 rounded-lg bg-[#0A0F16]/80 text-[#F4F7FB] text-[15px] font-medium border border-[rgba(148,163,184,0.24)] hover:border-[#38BDF8]/60 hover:text-[#67E8F9] hover:bg-[#0D141D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38BDF8] transition-all duration-200 active:scale-[0.98]"
+            <Link
+              href="/explore"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-12 px-8 rounded-lg bg-[#0A0F16]/80 text-[#F4F7FB] text-[15px] font-medium border border-[rgba(148,163,184,0.24)] hover:border-[#38BDF8]/60 hover:text-[#67E8F9] hover:bg-[#0D141D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38BDF8] transition-all duration-200 active:scale-[0.98] whitespace-nowrap shrink-0"
             >
-              <span>Explore</span>
+              <span>Explore Land</span>
               <ChevronRight className="h-4 w-4 text-[#94A3B8]" />
-            </button>
+            </Link>
           </div>
 
           {/* Centered Key Trust Metrics */}
