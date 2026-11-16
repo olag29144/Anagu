@@ -3,6 +3,11 @@ import { useState } from 'react';
 import GISMap from './GISMap';
 import type { LatLngPoint } from '@/lib/gis-utils';
 
+export interface GisMeasurementPayload {
+  points: LatLngPoint[];
+  areaSqMeters: number;
+}
+
 interface LandGisMapperProps {
   onBoundaryComplete: (points: LatLngPoint[]) => void;
   initialBoundary?: LatLngPoint[];

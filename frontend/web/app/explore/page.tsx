@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState, FormEvent } from 'react';
 import Link from 'next/link';
@@ -12,8 +12,8 @@ import {
   type LandCategory,
   type LandPurchaseOrder,
 } from '@/lib/land-store';
-import { ExploreParcelsMap } from '@/components/gis/ExploreParcelsMap';
-import { ParcelMiniMap } from '@/components/gis/ParcelMiniMap';
+import ExploreParcelsMap from '@/components/gis/ExploreParcelsMap';
+import ParcelMiniMap from '@/components/gis/ParcelMiniMap';
 import {
   Search,
   MapPin,
@@ -378,7 +378,7 @@ export default function ExploreLandPage() {
                       <div className="absolute inset-0 bg-gradient-to-t from-[#020305]/85 via-[#020305]/20 to-transparent" />
                       <div className="absolute bottom-3 left-4 right-4 flex items-end justify-between gap-2">
                         <span className="text-xs font-mono text-[#E2E8F0]">
-                          {parcel.state} · {parcel.category}
+                          {parcel.state} Â· {parcel.category}
                         </span>
                         <span
                           className={`text-xs font-mono font-semibold ${
@@ -528,7 +528,7 @@ export default function ExploreLandPage() {
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-mono text-[#38BDF8]">
-                    {inspectParcel.parcelRef} · {inspectParcel.category}
+                    {inspectParcel.parcelRef} Â· {inspectParcel.category}
                   </p>
                   <h2 className="text-xl font-bold text-[#F4F7FB] mt-1">
                     {inspectParcel.title}
@@ -694,7 +694,7 @@ export default function ExploreLandPage() {
               <form onSubmit={handlePurchaseSubmit} className="mt-5 space-y-4">
                 <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.18)] p-3.5 flex items-center justify-between text-xs">
                   <span className="text-[#94A3B8]">
-                    {buyParcel.location} · {buyParcel.areaSqm.toLocaleString()} sqm
+                    {buyParcel.location} Â· {buyParcel.areaSqm.toLocaleString()} sqm
                   </span>
                   <span className="font-mono font-bold text-[#38BDF8] tabular-nums">
                     {formatNaira(buyParcel.priceNgn)}
@@ -814,3 +814,4 @@ export default function ExploreLandPage() {
     </div>
   );
 }
+

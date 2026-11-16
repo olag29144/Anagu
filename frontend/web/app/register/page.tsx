@@ -1,12 +1,10 @@
-'use client';
+﻿'use client';
 
 import { useState, useRef, useEffect, useCallback, FormEvent, DragEvent } from 'react';
 import Link from 'next/link';
 import { Navbar } from '@/components/landing/Navbar';
-import {
-  LandGisMapper,
-  type GisMeasurementPayload,
-} from '@/components/gis/LandGisMapper';
+import LandGisMapper from '@/components/gis/LandGisMapper';
+import type { GisMeasurementPayload } from '@/components/gis/LandGisMapper';
 import {
   addLandListing,
   getLandListings,
@@ -96,7 +94,7 @@ const DOCUMENT_TYPES = [
 ];
 
 const QUICK_SIZE_OPTIONS = [
-  { label: '½ Plot', sqm: 324 },
+  { label: 'Â½ Plot', sqm: 324 },
   { label: 'Lagos Plot', sqm: 450 },
   { label: 'Standard Plot', sqm: 648 },
   { label: '2 Plots', sqm: 1296 },
@@ -428,7 +426,7 @@ export default function RegisterLandPage() {
                 Register Your Land
               </h1>
               <p className="mt-2 text-sm sm:text-base text-[#94A3B8] max-w-2xl">
-                Simple for every landowner — follow the 4 quick steps below or switch to the full form to enter everything at once.
+                Simple for every landowner â€” follow the 4 quick steps below or switch to the full form to enter everything at once.
               </p>
             </div>
 
@@ -648,7 +646,7 @@ export default function RegisterLandPage() {
                       </legend>
                     </div>
                     <span className="text-xs text-[#94A3B8]">
-                      Optional — auto-fills Land Size &amp; Coordinates into Step 3
+                      Optional â€” auto-fills Land Size &amp; Coordinates into Step 3
                     </span>
                   </div>
 
@@ -788,7 +786,7 @@ export default function RegisterLandPage() {
                       />
                       {areaEquivalents && (
                         <p className="mt-1 text-[11px] font-mono text-[#38BDF8] tabular-nums">
-                          ≈ {areaEquivalents.standardPlots648} standard plots · {areaEquivalents.hectares} ha
+                          â‰ˆ {areaEquivalents.standardPlots648} standard plots Â· {areaEquivalents.hectares} ha
                         </p>
                       )}
                     </div>
@@ -897,7 +895,7 @@ export default function RegisterLandPage() {
                     {forSale && (
                       <div>
                         <label htmlFor="priceNgn" className="block text-xs text-[#94A3B8] mb-1.5">
-                          Asking Price (₦ Naira) *
+                          Asking Price (â‚¦ Naira) *
                         </label>
                         <input
                           id="priceNgn"
@@ -954,7 +952,7 @@ export default function RegisterLandPage() {
                       </legend>
                     </div>
                     <span className="text-xs text-[#64748B]">
-                      Recommended · Optional if not on hand right now
+                      Recommended Â· Optional if not on hand right now
                     </span>
                   </div>
 
@@ -1024,7 +1022,7 @@ export default function RegisterLandPage() {
                                 {doc.name}
                               </p>
                               <p className="text-xs font-mono text-[#64748B]">
-                                {formatFileSize(doc.size)} · {doc.type || 'file'}
+                                {formatFileSize(doc.size)} Â· {doc.type || 'file'}
                               </p>
                             </div>
                           </div>
@@ -1049,26 +1047,26 @@ export default function RegisterLandPage() {
                       <div>
                         <p className="text-[#64748B]">Owner &amp; Phone</p>
                         <p className="font-medium text-[#F4F7FB] mt-0.5 truncate">
-                          {ownerName.trim() || '—'} · {ownerPhone.trim() || '—'}
+                          {ownerName.trim() || 'â€”'} Â· {ownerPhone.trim() || 'â€”'}
                         </p>
                       </div>
                       <div>
                         <p className="text-[#64748B]">Land &amp; Location</p>
                         <p className="font-medium text-[#F4F7FB] mt-0.5 truncate">
-                          {title.trim() || 'Untitled'} · {state}
+                          {title.trim() || 'Untitled'} Â· {state}
                         </p>
                       </div>
                       <div>
                         <p className="text-[#64748B]">Size &amp; Map</p>
                         <p className="font-mono font-medium text-[#F4F7FB] mt-0.5 tabular-nums">
-                          {numericArea > 0 ? `${numericArea.toLocaleString()} sqm` : '—'} ·{' '}
+                          {numericArea > 0 ? `${numericArea.toLocaleString()} sqm` : 'â€”'} Â·{' '}
                           {gisPolygon.length >= 3 ? `${gisPolygon.length} corners` : 'No map box'}
                         </p>
                       </div>
                       <div>
                         <p className="text-[#64748B]">Listing &amp; Files</p>
                         <p className="font-mono font-medium text-[#F4F7FB] mt-0.5 tabular-nums">
-                          {forSale && numericPrice > 0 ? formatNaira(numericPrice) : 'Registry only'} ·{' '}
+                          {forSale && numericPrice > 0 ? formatNaira(numericPrice) : 'Registry only'} Â·{' '}
                           {documents.length} {documents.length === 1 ? 'file' : 'files'}
                         </p>
                       </div>
@@ -1093,7 +1091,7 @@ export default function RegisterLandPage() {
                       className="flex-1 h-12 px-6 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] transition-colors flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap"
                     >
                       <Check className="h-4 w-4" />
-                      <span>{submitting ? 'Submitting Land Registration…' : 'Submit Land Registration'}</span>
+                      <span>{submitting ? 'Submitting Land Registrationâ€¦' : 'Submit Land Registration'}</span>
                     </button>
                   </div>
                 </fieldset>
@@ -1105,3 +1103,4 @@ export default function RegisterLandPage() {
     </div>
   );
 }
+
