@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState, FormEvent } from 'react';
 import Link from 'next/link';
 import { Navbar } from '@/components/landing/Navbar';
-import { Footer } from '@/components/landing/Footer';
 import {
   getLandListings,
   createPurchaseOrder,
@@ -13,6 +12,8 @@ import {
   type LandCategory,
   type LandPurchaseOrder,
 } from '@/lib/land-store';
+import { ExploreParcelsMap } from '@/components/gis/ExploreParcelsMap';
+import { ParcelMiniMap } from '@/components/gis/ParcelMiniMap';
 import {
   Search,
   MapPin,
@@ -24,6 +25,8 @@ import {
   ShoppingBag,
   Eye,
   SlidersHorizontal,
+  LayoutGrid,
+  Map as MapIcon,
 } from 'lucide-react';
 
 const CATEGORIES: Array<'All' | LandCategory> = [
@@ -45,6 +48,8 @@ export default function ExploreLandPage() {
   const [selectedState, setSelectedState] = useState<string>('All States');
   const [sortBy, setSortBy] = useState<'newest' | 'price_asc' | 'price_desc' | 'area_desc'>('newest');
   const [showSold, setShowSold] = useState(true);
+  const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
+  const [inspectVisualTab, setInspectVisualTab] = useState<'map' | 'photo'>('map');
 
   // Active modals
   const [inspectParcel, setInspectParcel] = useState<LandListing | null>(null);
@@ -269,9 +274,38 @@ export default function ExploreLandPage() {
                   </button>
                 );
               })}
-              <span className="ml-auto text-xs font-mono tabular-nums text-[#64748B]">
-                {filteredListings.length} {filteredListings.length === 1 ? 'parcel' : 'parcels'} found
-              </span>
+              <div className="ml-auto flex items-center gap-3">
+                <span className="text-xs font-mono tabular-nums text-[#64748B]">
+                  {filteredListings.length} {filteredListings.length === 1 ? 'parcel' : 'parcels'} found
+                </span>
+
+                <div className="inline-flex rounded-lg bg-[#0A0F16] border border-[rgba(91,133,167,0.22)] p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('grid')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${
+                      viewMode === 'grid'
+                        ? 'bg-[#38BDF8] text-[#020305] font-semibold'
+                        : 'text-[#94A3B8] hover:text-[#F4F7FB]'
+                    }`}
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                    <span>Grid View</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('map')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${
+                      viewMode === 'map'
+                        ? 'bg-[#38BDF8] text-[#020305] font-semibold'
+                        : 'text-[#94A3B8] hover:text-[#F4F7FB]'
+                    }`}
+                  >
+                    <MapIcon className="h-3.5 w-3.5" />
+                    <span>GIS Map View</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -311,8 +345,19 @@ export default function ExploreLandPage() {
             </div>
           )}
 
-          {/* Scrollable Land Grid */}
-          {loaded && filteredListings.length > 0 && (
+          {/* Scrollable Land Grid or GIS Map View */}
+          {loaded && filteredListings.length > 0 && viewMode === 'map' && (
+            <ExploreParcelsMap
+              parcels={filteredListings}
+              onInspect={(parcel) => {
+                setInspectVisualTab('map');
+                setInspectParcel(parcel);
+              }}
+              onBuy={handleOpenBuy}
+            />
+          )}
+
+          {loaded && filteredListings.length > 0 && viewMode === 'grid' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredListings.map((parcel) => {
                 const isSold = parcel.saleStatus === 'sold';
@@ -425,23 +470,59 @@ export default function ExploreLandPage() {
           aria-label={`Details for ${inspectParcel.title}`}
         >
           <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[12px] bg-[#0A0F16] border border-[rgba(91,133,167,0.30)] shadow-2xl">
-            <div className="relative aspect-[16/9] w-full bg-[#05080D]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={inspectParcel.imageUrl}
-                alt={inspectParcel.title}
-                referrerPolicy="no-referrer"
-                className="h-full w-full object-cover"
-              />
+            <div className="p-4 border-b border-[rgba(91,133,167,0.16)] flex items-center justify-between gap-3">
+              <div className="inline-flex rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setInspectVisualTab('map')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${
+                    inspectVisualTab === 'map'
+                      ? 'bg-[#38BDF8] text-[#020305] font-semibold'
+                      : 'text-[#94A3B8] hover:text-[#F4F7FB]'
+                  }`}
+                >
+                  <MapIcon className="h-3.5 w-3.5" />
+                  <span>GIS Satellite Boundary</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInspectVisualTab('photo')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${
+                    inspectVisualTab === 'photo'
+                      ? 'bg-[#38BDF8] text-[#020305] font-semibold'
+                      : 'text-[#94A3B8] hover:text-[#F4F7FB]'
+                  }`}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  <span>Site Preview</span>
+                </button>
+              </div>
+
               <button
                 type="button"
                 onClick={() => setInspectParcel(null)}
-                className="absolute top-3 right-3 h-9 w-9 rounded-lg bg-[#020305]/80 text-[#F4F7FB] border border-[rgba(91,133,167,0.3)] flex items-center justify-center hover:border-[#38BDF8]"
+                className="h-9 w-9 rounded-lg bg-[#05080D] text-[#F4F7FB] border border-[rgba(91,133,167,0.3)] flex items-center justify-center hover:border-[#38BDF8]"
                 aria-label="Close parcel details"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
+
+            {inspectVisualTab === 'map' ? (
+              <div className="p-4 pb-0">
+                <ParcelMiniMap parcel={inspectParcel} />
+              </div>
+            ) : (
+              <div className="relative aspect-[16/9] w-full bg-[#05080D]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={inspectParcel.imageUrl}
+                  alt={inspectParcel.title}
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            )}
 
             <div className="p-6 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
@@ -730,8 +811,6 @@ export default function ExploreLandPage() {
           </div>
         </div>
       )}
-
-      <Footer />
     </div>
   );
 }

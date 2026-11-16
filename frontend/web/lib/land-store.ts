@@ -14,6 +14,12 @@ export interface LandDocument {
   dataUrl?: string;
 }
 
+import {
+  createRectangleAroundPoint,
+  parseCoordinateString,
+  type LatLngPoint,
+} from './gis-utils';
+
 export interface LandListing {
   id: string;
   title: string;
@@ -33,6 +39,10 @@ export interface LandListing {
   approvalStatus: 'approved' | 'pending_review' | 'rejected';
   description: string;
   coordinates: string;
+  lat?: number;
+  lng?: number;
+  polygon?: LatLngPoint[];
+  perimeterMeters?: number;
   imageUrl: string;
   documents: LandDocument[];
   createdAt: string;
@@ -316,6 +326,10 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     description:
       'Expansive industrial and agro-processing parcel adjacent to the rail freight terminal corridor, surveyed with clean boundary beacons.',
     coordinates: '7.5245° N, 3.9112° E',
+    lat: 7.5245,
+    lng: 3.9112,
+    polygon: createRectangleAroundPoint({ lat: 7.5245, lng: 3.9112 }, 120, 100),
+    perimeterMeters: 440,
     imageUrl: '/assets/lands/ogun_agricultural.jpg',
     documents: [
       {
@@ -329,6 +343,28 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     createdAt: '2026-11-05T09:30:00.000Z',
   },
 ];
+
+// Enrich initial seed listings with spatial coordinates & boundary polygons derived from areaSqm
+const SEED_DIMENSIONS: Record<string, { lat: number; lng: number; w: number; l: number }> = {
+  'LND-2026-101': { lat: 6.4382, lng: 3.4721, w: 31, l: 40 },
+  'LND-2026-102': { lat: 9.0820, lng: 7.4983, w: 43, l: 50 },
+  'LND-2026-103': { lat: 6.6018, lng: 3.3515, w: 50, l: 68 },
+  'LND-2026-104': { lat: 6.8485, lng: 3.6463, w: 150, l: 160 },
+  'LND-2026-105': { lat: 6.4648, lng: 3.4552, w: 30, l: 50 },
+  'LND-2026-106': { lat: 9.0765, lng: 7.4792, w: 37, l: 50 },
+  'LND-2026-107': { lat: 4.8242, lng: 7.0014, w: 28, l: 35 },
+  'LND-2026-108': { lat: 7.5245, lng: 3.9112, w: 120, l: 100 },
+};
+
+for (const seed of INITIAL_LAND_LISTINGS) {
+  const spec = SEED_DIMENSIONS[seed.id];
+  if (spec) {
+    seed.lat = spec.lat;
+    seed.lng = spec.lng;
+    seed.polygon = createRectangleAroundPoint({ lat: spec.lat, lng: spec.lng }, spec.w, spec.l);
+    seed.perimeterMeters = (spec.w + spec.l) * 2;
+  }
+}
 
 export const INITIAL_PURCHASE_ORDERS: LandPurchaseOrder[] = [
   {
@@ -347,6 +383,38 @@ export const INITIAL_PURCHASE_ORDERS: LandPurchaseOrder[] = [
   },
 ];
 
+function enrichListingGeometry(item: LandListing): LandListing {
+  if (item.lat !== undefined && item.lng !== undefined && item.polygon && item.polygon.length >= 3) {
+    return item;
+  }
+  const seedSpec = SEED_DIMENSIONS[item.id];
+  if (seedSpec) {
+    return {
+      ...item,
+      lat: item.lat ?? seedSpec.lat,
+      lng: item.lng ?? seedSpec.lng,
+      polygon:
+        item.polygon && item.polygon.length >= 3
+          ? item.polygon
+          : createRectangleAroundPoint(
+              { lat: seedSpec.lat, lng: seedSpec.lng },
+              seedSpec.w,
+              seedSpec.l,
+            ),
+      perimeterMeters: item.perimeterMeters ?? (seedSpec.w + seedSpec.l) * 2,
+    };
+  }
+  const parsedCoord = parseCoordinateString(item.coordinates);
+  if (parsedCoord && (item.lat === undefined || item.lng === undefined)) {
+    return {
+      ...item,
+      lat: parsedCoord.lat,
+      lng: parsedCoord.lng,
+    };
+  }
+  return item;
+}
+
 export function getLandListings(): LandListing[] {
   if (typeof window === 'undefined') return INITIAL_LAND_LISTINGS;
   try {
@@ -356,7 +424,10 @@ export function getLandListings(): LandListing[] {
       return INITIAL_LAND_LISTINGS;
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_LAND_LISTINGS;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return (parsed as LandListing[]).map(enrichListingGeometry);
+    }
+    return INITIAL_LAND_LISTINGS;
   } catch {
     return INITIAL_LAND_LISTINGS;
   }
