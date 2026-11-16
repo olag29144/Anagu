@@ -3,12 +3,7 @@
 import Link from 'next/link';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 
-interface HeroProps {
-  onExploreClick?: () => void;
-  onVerifyClick?: () => void;
-}
-
-export function Hero({ onExploreClick }: HeroProps) {
+export function Hero() {
   return (
     <section id="overview" className="relative pt-36 pb-20 sm:pt-44 sm:pb-28 lg:pt-48 lg:pb-32 overflow-hidden">
       {/* Centered Atmospheric Radial Glow Layer */}

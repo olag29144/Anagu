@@ -3,17 +3,12 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu, X, ArrowRight, ShieldCheck, Database, Layers, MapPin } from 'lucide-react';
+import { Menu, X, ArrowRight, MapPin, Home } from 'lucide-react';
 
-interface NavbarProps {
-  onNavigateSection?: (sectionId: string) => void;
-}
-
-export function Navbar({ onNavigateSection }: NavbarProps) {
+export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
-  const isHome = pathname === '/';
 
   useEffect(() => {
     const handleScroll = () => {
@@ -22,22 +17,6 @@ export function Navbar({ onNavigateSection }: NavbarProps) {
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
-
-  const handleNavClick = (sectionId: string) => {
-    setMobileMenuOpen(false);
-    if (isHome && onNavigateSection) {
-      onNavigateSection(sectionId);
-      return;
-    }
-    if (isHome) {
-      const el = document.getElementById(sectionId);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth' });
-        return;
-      }
-    }
-    window.location.href = `/#${sectionId}`;
-  };
 
   return (
     <header
@@ -77,6 +56,16 @@ export function Navbar({ onNavigateSection }: NavbarProps) {
           {/* Zone 2: Single-line Public Navigation Links */}
           <nav className="hidden md:flex items-center gap-6" aria-label="Main Navigation">
             <Link
+              href="/"
+              className={`text-[14px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                pathname === '/'
+                  ? 'text-[#38BDF8]'
+                  : 'text-[#94A3B8] hover:text-[#67E8F9]'
+              }`}
+            >
+              Home
+            </Link>
+            <Link
               href="/explore"
               className={`text-[14px] font-medium transition-colors whitespace-nowrap shrink-0 ${
                 pathname === '/explore'
@@ -86,34 +75,6 @@ export function Navbar({ onNavigateSection }: NavbarProps) {
             >
               Explore Land
             </Link>
-            <button
-              type="button"
-              onClick={() => handleNavClick('verification')}
-              className="text-[14px] font-medium text-[#94A3B8] hover:text-[#67E8F9] transition-colors whitespace-nowrap shrink-0"
-            >
-              Verification
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick('architecture')}
-              className="text-[14px] font-medium text-[#94A3B8] hover:text-[#67E8F9] transition-colors whitespace-nowrap shrink-0"
-            >
-              Architecture
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick('ledger')}
-              className="text-[14px] font-medium text-[#94A3B8] hover:text-[#67E8F9] transition-colors whitespace-nowrap shrink-0"
-            >
-              Public Ledger
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick('contact')}
-              className="text-[14px] font-medium text-[#94A3B8] hover:text-[#67E8F9] transition-colors whitespace-nowrap shrink-0"
-            >
-              Contact
-            </button>
           </nav>
 
           {/* Zone 3: Single Primary Action */}
@@ -143,6 +104,14 @@ export function Navbar({ onNavigateSection }: NavbarProps) {
       {mobileMenuOpen && (
         <div className="md:hidden border-b border-[rgba(91,133,167,0.20)] bg-[#05080D]/95 backdrop-blur-xl px-4 pt-3 pb-6 space-y-1">
           <Link
+            href="/"
+            onClick={() => setMobileMenuOpen(false)}
+            className="w-full flex items-center justify-between px-3 py-2.5 text-[15px] font-medium text-[#F4F7FB] hover:bg-[#0A0F16] hover:text-[#67E8F9] rounded-md transition-colors"
+          >
+            <span>Home</span>
+            <Home className="h-4 w-4 text-[#38BDF8]" />
+          </Link>
+          <Link
             href="/explore"
             onClick={() => setMobileMenuOpen(false)}
             className="w-full flex items-center justify-between px-3 py-2.5 text-[15px] font-medium text-[#F4F7FB] hover:bg-[#0A0F16] hover:text-[#67E8F9] rounded-md transition-colors"
@@ -150,38 +119,6 @@ export function Navbar({ onNavigateSection }: NavbarProps) {
             <span>Explore Land</span>
             <MapPin className="h-4 w-4 text-[#38BDF8]" />
           </Link>
-          <button
-            type="button"
-            onClick={() => handleNavClick('verification')}
-            className="w-full flex items-center justify-between px-3 py-2.5 text-[15px] font-medium text-[#F4F7FB] hover:bg-[#0A0F16] hover:text-[#67E8F9] rounded-md transition-colors text-left"
-          >
-            <span>Verification</span>
-            <ShieldCheck className="h-4 w-4 text-[#526174]" />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleNavClick('architecture')}
-            className="w-full flex items-center justify-between px-3 py-2.5 text-[15px] font-medium text-[#F4F7FB] hover:bg-[#0A0F16] hover:text-[#67E8F9] rounded-md transition-colors text-left"
-          >
-            <span>Architecture</span>
-            <Database className="h-4 w-4 text-[#526174]" />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleNavClick('ledger')}
-            className="w-full flex items-center justify-between px-3 py-2.5 text-[15px] font-medium text-[#F4F7FB] hover:bg-[#0A0F16] hover:text-[#67E8F9] rounded-md transition-colors text-left"
-          >
-            <span>Public Ledger</span>
-            <Layers className="h-4 w-4 text-[#526174]" />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleNavClick('contact')}
-            className="w-full flex items-center justify-between px-3 py-2.5 text-[15px] font-medium text-[#F4F7FB] hover:bg-[#0A0F16] hover:text-[#67E8F9] rounded-md transition-colors text-left"
-          >
-            <span>Contact</span>
-            <ArrowRight className="h-4 w-4 text-[#526174]" />
-          </button>
 
           <div className="pt-3">
             <Link

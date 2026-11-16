@@ -23,6 +23,8 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
+    "@types/google.maps": "^3.66.10",
+    "@vis.gl/react-google-maps": "^1.10.2",
     "iconv-lite": "^0.7.3"
   },
   "overrides": {
