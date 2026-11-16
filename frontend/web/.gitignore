@@ -1,1 +1,4 @@
 .vercel
+
+# Development builds
+.next-dev/
