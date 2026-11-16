@@ -35,7 +35,6 @@ export default function LandingPage() {
       {/* Main Content Area */}
       <main className="relative z-10">
         <Hero
-          onExploreClick={() => scrollToSection('architecture')}
           onVerifyClick={() => scrollToSection('verification')}
         />
 

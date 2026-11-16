@@ -49,40 +49,35 @@ export function Footer() {
             </div>
           </div>
 
-          {/* Col 3: Statutory Portals */}
+          {/* Col 3: Land Registry & Marketplace */}
           <div>
             <h4 className="text-xs font-mono uppercase tracking-wider text-[#F4F7FB] mb-4">
-              Portals & Consoles
+              Land Services
             </h4>
             <ul className="space-y-2.5 text-[#94A3B8]">
               <li>
-                <Link href="/register" className="hover:text-[#67E8F9] transition-colors font-medium text-[#38BDF8]">
-                  Register New Account
+                <Link href="/explore" className="hover:text-[#67E8F9] transition-colors font-medium text-[#38BDF8]">
+                  Explore Land for Sale
                 </Link>
               </li>
               <li>
-                <Link href="/citizen" className="hover:text-[#67E8F9] transition-colors">
-                  Citizen Self-Service
+                <Link href="/register" className="hover:text-[#67E8F9] transition-colors">
+                  Register Land &amp; Upload Deeds
                 </Link>
               </li>
               <li>
-                <Link href="/citizen/submit" className="hover:text-[#67E8F9] transition-colors">
-                  Submit Parcel Application
+                <Link href="/#verification" className="hover:text-[#67E8F9] transition-colors">
+                  Verify Land Title
                 </Link>
               </li>
               <li>
-                <Link href="/registrar" className="hover:text-[#67E8F9] transition-colors">
-                  Land Registrar Review
+                <Link href="/#ledger" className="hover:text-[#67E8F9] transition-colors">
+                  Public Cadastre Ledger
                 </Link>
               </li>
               <li>
-                <Link href="/governor" className="hover:text-[#67E8F9] transition-colors">
-                  Governor Executive Console
-                </Link>
-              </li>
-              <li>
-                <Link href="/admin" className="hover:text-[#67E8F9] transition-colors">
-                  System Registry Admin
+                <Link href="/#contact" className="hover:text-[#67E8F9] transition-colors">
+                  Ministry Inquiries
                 </Link>
               </li>
             </ul>
