@@ -1,0 +1,44 @@
+VERCEL REDEPLOYMENT CHECKLIST
+==============================
+
+? Code Fixed (commit: 3864b71)
+? No leaflet-draw imports in any files
+? Local build succeeds
+
+STEP-BY-STEP VERCEL RESET:
+--------------------------
+
+1. DELETE OLD PROJECT:
+   - Go to: https://vercel.com/dashboard
+   - Click your "web" project
+   - Click "Settings" tab
+   - Scroll to bottom "Danger Zone"
+   - Click "Delete Project"
+   - Type the project name to confirm
+   - Click Delete
+
+2. CREATE NEW PROJECT:
+   - Click "Add New..." ? "Project"
+   - Click "Import" next to "olag29144/Anagu"
+   - Configure:
+     * Root Directory: frontend/web
+     * Framework Preset: Next.js
+     * Build Command: npm run build
+     * Output Directory: .next
+   - Add Environment Variables:
+     * NEXT_PUBLIC_API_URL = https://anagu-production.up.railway.app
+   - Click "Deploy"
+
+3. WAIT 3-5 MINUTES for build to complete
+
+4. VERIFY:
+   - Check deployment succeeds (no leaflet-draw error)
+   - Visit the new URL
+   - Test /login page
+   - Verify map loads
+
+Backend is already live at:
+https://anagu-production.up.railway.app
+
+Demo account:
+demo@anagu.app / Demo123456
