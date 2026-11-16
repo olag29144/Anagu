@@ -1,27 +1,14 @@
 ﻿'use client';
-import { useState } from 'react';
-import GISMap from './GISMap';
-import type { LatLngPoint } from '@/lib/gis-utils';
 
 export interface GisMeasurementPayload {
-  points: LatLngPoint[];
+  points: any[];
   areaSqMeters: number;
 }
 
-interface LandGisMapperProps {
-  onBoundaryComplete: (points: LatLngPoint[]) => void;
-  initialBoundary?: LatLngPoint[];
-}
-
-export default function LandGisMapper({ onBoundaryComplete, initialBoundary }: LandGisMapperProps) {
+export default function LandGisMapper() {
   return (
-    <div className="space-y-4">
-      <GISMap 
-        center={[8.9328677, 11.336599]} 
-        zoom={15}
-        onBoundaryDraw={onBoundaryComplete}
-        existingBoundary={initialBoundary}
-      />
+    <div className="w-full h-[600px] bg-gray-200 rounded-lg flex items-center justify-center">
+      <p className="text-gray-600">Land GIS Mapper - Coming Soon</p>
     </div>
   );
 }
