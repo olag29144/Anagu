@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useMemo, useState, FormEvent } from 'react';
 import Link from 'next/link';
@@ -29,7 +29,7 @@ import {
   type DetectedWalletProvider,
   type ConnectedWalletState,
 } from '@/lib/web3-wallet';
-import { ExploreParcelsMap } from '@/components/gis/ExploreParcelsMap';
+import ExploreParcelsMap from '@/components/gis/ExploreParcelsMap';
 import { ParcelMiniMap } from '@/components/gis/ParcelMiniMap';
 import {
   Search,
@@ -585,7 +585,7 @@ export default function ExploreLandPage() {
                       <div className="absolute inset-0 bg-gradient-to-t from-[#020305]/85 via-[#020305]/20 to-transparent" />
                       <div className="absolute bottom-3 left-4 right-4 flex items-end justify-between gap-2">
                         <span className="text-xs font-mono text-[#E2E8F0]">
-                          {parcel.state} Â· {parcel.category}
+                          {parcel.state} · {parcel.category}
                         </span>
                         <span
                           className={`text-xs font-mono font-semibold ${
@@ -735,7 +735,7 @@ export default function ExploreLandPage() {
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-mono text-[#38BDF8]">
-                    {inspectParcel.parcelRef} Â· {inspectParcel.category}
+                    {inspectParcel.parcelRef} · {inspectParcel.category}
                   </p>
                   <h2 className="text-xl font-bold text-[#F4F7FB] mt-1">
                     {inspectParcel.title}
@@ -909,7 +909,7 @@ export default function ExploreLandPage() {
                     <p className="text-[#94A3B8] break-all">
                       Signature Proof:{' '}
                       <span className="font-mono text-emerald-400">
-                        {completedOrder.walletSignature.slice(0, 26)}â€¦
+                        {completedOrder.walletSignature.slice(0, 26)}…
                       </span>
                     </p>
                   )}
@@ -917,7 +917,7 @@ export default function ExploreLandPage() {
                     <p className="text-[#94A3B8] break-all">
                       Tx Hash:{' '}
                       <span className="font-mono text-emerald-400">
-                        {completedOrder.walletTxHash.slice(0, 26)}â€¦
+                        {completedOrder.walletTxHash.slice(0, 26)}…
                       </span>
                     </p>
                   )}
@@ -937,7 +937,7 @@ export default function ExploreLandPage() {
               <form onSubmit={handlePurchaseSubmit} className="mt-5 space-y-4">
                 <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.18)] p-3.5 flex items-center justify-between text-xs">
                   <span className="text-[#94A3B8]">
-                    {buyParcel.location} Â· {buyParcel.areaSqm.toLocaleString()} sqm
+                    {buyParcel.location} · {buyParcel.areaSqm.toLocaleString()} sqm
                   </span>
                   <span className="font-mono font-bold text-[#38BDF8] tabular-nums">
                     {formatNaira(buyParcel.priceNgn)}
@@ -961,7 +961,7 @@ export default function ExploreLandPage() {
                     ) : walletConnecting ? (
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[#38BDF8]">
                         <Loader2 className="h-3 w-3 animate-spin" />
-                        Waiting for Walletâ€¦
+                        Waiting for Wallet…
                       </span>
                     ) : (
                       <span className="text-[11px] font-mono text-amber-300">
@@ -987,13 +987,13 @@ export default function ExploreLandPage() {
                         )}
                         <div className="min-w-0">
                           <p className="font-medium text-[#F4F7FB] truncate">
-                            {connectedWallet.walletName} Â·{' '}
+                            {connectedWallet.walletName} ·{' '}
                             <span className="font-mono text-[#67E8F9]">
                               {formatShortAddress(connectedWallet.address)}
                             </span>
                           </p>
                           <p className="text-[11px] font-mono text-[#94A3B8] truncate">
-                            {connectedWallet.chainName} Â· {connectedWallet.balanceEth} ETH
+                            {connectedWallet.chainName} · {connectedWallet.balanceEth} ETH
                           </p>
                         </div>
                       </div>
@@ -1221,7 +1221,7 @@ export default function ExploreLandPage() {
                     {submittingPurchase && <Loader2 className="h-4 w-4 animate-spin" />}
                     <span>
                       {submittingPurchase
-                        ? 'Confirming in Walletâ€¦'
+                        ? 'Confirming in Wallet…'
                         : paymentMethod.startsWith('Web3 Wallet')
                         ? 'Authorize & Buy Land'
                         : 'Confirm Land Purchase'}

@@ -1,4 +1,4 @@
-# Anagu — Land Administration Framework
+﻿# Anagu — Land Administration Framework
 ## Complete Project Reference & Build Guide
 
 > **System:** An integrated Blockchain–GIS–NFT–Community Verification Oracle–MQTT framework

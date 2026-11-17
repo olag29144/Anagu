@@ -1,4 +1,4 @@
-﻿import type { Metadata } from 'next';
+import type { Metadata } from 'next';
 import './globals.css';
 import { MapsContextProvider } from '@/components/gis/MapsContextProvider';
 
@@ -18,14 +18,6 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <head>
-        <link
-          rel="stylesheet"
-          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-          crossOrigin=""
-        />
-      </head>
       <body className="min-h-screen bg-[#020305] text-[#F4F7FB] antialiased selection:bg-[#38BDF8]/20 selection:text-[#67E8F9]">
         <MapsContextProvider>{children}</MapsContextProvider>
       </body>

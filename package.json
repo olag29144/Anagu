@@ -1,7 +1,7 @@
 {
   "name": "anagu",
   "version": "1.0.0",
-  "description": "Anagu Land Administration Framework â€” permissioned full-stack land title system",
+  "description": "Anagu Land Administration Framework — permissioned full-stack land title system",
   "private": true,
   "scripts": {
     "dev": "NEXT_IGNORE_INCORRECT_LOCKFILE=1 npm run dev --workspace=@anagu/web",
