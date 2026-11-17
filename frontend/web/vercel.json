@@ -1,6 +1,6 @@
 ﻿{
   "version": 2,
-  "buildCommand": "rm -rf node_modules .next && npm install && npm run build",
+  "buildCommand": "npm run build:vercel",
   "framework": "nextjs",
-  "installCommand": "npm install --force"
+  "installCommand": "npm install --legacy-peer-deps"
 }
