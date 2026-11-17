@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "anagu",
   "version": "1.0.0",
   "description": "Anagu Land Administration Framework â€” permissioned full-stack land title system",
@@ -28,7 +28,6 @@
     "@vis.gl/react-google-maps": "^1.10.2",
     "iconv-lite": "^0.7.3",
     "leaflet": "^1.9.4"
-
   },
   "overrides": {
     "react": "18.2.0",
