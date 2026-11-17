@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
+import type * as LeafletNS from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
   AlertTriangle,
   Check,
@@ -14,8 +15,8 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react';
-import type { MapViewCommand } from './OpenMapGisCanvas';
 import {
+  NIGERIA_DEFAULT_CENTER,
   computeEdgeMeasurements,
   computePerimeterFallback,
   computePolygonCentroid,
@@ -25,19 +26,300 @@ import {
   formatPlotEquivalents,
   parsePolygonInput,
   toGeoJsonPolygon,
+  type EdgeMeasurement,
   type LatLngPoint,
 } from '@/lib/gis-utils';
-import { OPEN_MAP_LAYERS, type OpenMapLayerId } from '@/lib/openmap-tiles';
+import {
+  OPEN_MAP_LAYERS,
+  createOpenMapTileLayer,
+  type OpenMapLayerId,
+} from '@/lib/openmap-tiles';
 import type { LandListing } from '@/lib/land-store';
 
-const OpenMapGisCanvas = dynamic(() => import('./OpenMapGisCanvas'), {
-  ssr: false,
-  loading: () => (
-    <div className="h-full w-full bg-[#05080D] flex items-center justify-center text-xs font-mono text-[#94A3B8] animate-pulse">
-      Initializing OpenStreetMap GIS Engine…
-    </div>
-  ),
-});
+type MapViewCommand =
+  | { type: 'pan'; center: LatLngPoint; zoom?: number; seq: number }
+  | { type: 'fitBounds'; points: LatLngPoint[]; seq: number }
+  | { type: 'fitBox'; box: [[number, number], [number, number]]; seq: number };
+
+function OpenMapGisCanvasInline({
+  layerId,
+  isVisible,
+  viewCommand,
+  showRegistryOverlay,
+  existingParcels,
+  polygonVertices,
+  pinPosition,
+  isOverlapping,
+  edgeMeasurements,
+  onCursorMove,
+  onZoomChange,
+  onPinDragEnd,
+  onCornerDrag,
+  onSelectExistingParcel,
+}: {
+  layerId: OpenMapLayerId;
+  isVisible: boolean;
+  viewCommand: MapViewCommand | null;
+  showRegistryOverlay: boolean;
+  existingParcels: LandListing[];
+  polygonVertices: LatLngPoint[];
+  pinPosition: LatLngPoint | null;
+  isOverlapping: boolean;
+  edgeMeasurements: EdgeMeasurement[];
+  onCursorMove?: (pt: LatLngPoint | null) => void;
+  onZoomChange?: (zoom: number) => void;
+  onPinDragEnd: (pt: LatLngPoint) => void;
+  onCornerDrag: (index: number, pt: LatLngPoint) => void;
+  onSelectExistingParcel: (parcel: LandListing) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const leafletRef = useRef<typeof LeafletNS | null>(null);
+  const mapRef = useRef<LeafletNS.Map | null>(null);
+  const baseLayerRef = useRef<LeafletNS.LayerGroup | null>(null);
+  const registryLayerRef = useRef<LeafletNS.LayerGroup | null>(null);
+  const gisLayerRef = useRef<LeafletNS.LayerGroup | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+
+  const onPinDragEndRef = useRef(onPinDragEnd);
+  const onCornerDragRef = useRef(onCornerDrag);
+  const onSelectExistingRef = useRef(onSelectExistingParcel);
+  const onCursorMoveRef = useRef(onCursorMove);
+  const onZoomChangeRef = useRef(onZoomChange);
+
+  onPinDragEndRef.current = onPinDragEnd;
+  onCornerDragRef.current = onCornerDrag;
+  onSelectExistingRef.current = onSelectExistingParcel;
+  onCursorMoveRef.current = onCursorMove;
+  onZoomChangeRef.current = onZoomChange;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const leafletMod = await import('leaflet');
+      const L = (leafletMod.default ?? leafletMod) as typeof LeafletNS;
+      if (cancelled || !containerRef.current || mapRef.current) return;
+
+      leafletRef.current = L;
+      const map = L.map(containerRef.current, {
+        center: [NIGERIA_DEFAULT_CENTER.lat, NIGERIA_DEFAULT_CENTER.lng],
+        zoom: 6,
+        zoomControl: true,
+      });
+
+      L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(map);
+
+      const registryLayer = L.layerGroup().addTo(map);
+      const gisLayer = L.layerGroup().addTo(map);
+
+      map.on('mousemove', (e: LeafletNS.LeafletMouseEvent) => {
+        onCursorMoveRef.current?.({ lat: e.latlng.lat, lng: e.latlng.lng });
+      });
+      map.on('mouseout', () => {
+        onCursorMoveRef.current?.(null);
+      });
+      map.on('zoomend', () => {
+        onZoomChangeRef.current?.(map.getZoom());
+      });
+
+      mapRef.current = map;
+      registryLayerRef.current = registryLayer;
+      gisLayerRef.current = gisLayer;
+      onZoomChangeRef.current?.(map.getZoom());
+      setMapReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+      baseLayerRef.current = null;
+      registryLayerRef.current = null;
+      gisLayerRef.current = null;
+      setMapReady(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = leafletRef.current;
+    if (!mapReady || !map || !L) return;
+
+    if (baseLayerRef.current) {
+      map.removeLayer(baseLayerRef.current);
+    }
+    const nextLayer = createOpenMapTileLayer(L, layerId);
+    nextLayer.addTo(map);
+    baseLayerRef.current = nextLayer;
+  }, [layerId, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = leafletRef.current;
+    if (!mapReady || !map || !L || !isVisible) return;
+
+    const timer = window.setTimeout(() => {
+      map.invalidateSize();
+      if (polygonVertices.length >= 3) {
+        const bounds = L.latLngBounds(
+          polygonVertices.map((p) => [p.lat, p.lng] as [number, number]),
+        );
+        map.fitBounds(bounds, { padding: [56, 56], maxZoom: 18 });
+      } else if (pinPosition) {
+        map.panTo([pinPosition.lat, pinPosition.lng]);
+      }
+    }, 80);
+
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = leafletRef.current;
+    if (!mapReady || !map || !L || !viewCommand) return;
+
+    if (viewCommand.type === 'pan') {
+      map.setView(
+        [viewCommand.center.lat, viewCommand.center.lng],
+        viewCommand.zoom ?? map.getZoom(),
+      );
+      return;
+    }
+
+    if (viewCommand.type === 'fitBounds' && viewCommand.points.length > 0) {
+      const bounds = L.latLngBounds(
+        viewCommand.points.map((p) => [p.lat, p.lng] as [number, number]),
+      );
+      map.fitBounds(bounds, { padding: [56, 56], maxZoom: 18 });
+      return;
+    }
+
+    if (viewCommand.type === 'fitBox') {
+      map.fitBounds(viewCommand.box, { padding: [40, 40], maxZoom: 17 });
+    }
+  }, [viewCommand, mapReady]);
+
+  useEffect(() => {
+    const layer = registryLayerRef.current;
+    const L = leafletRef.current;
+    if (!mapReady || !layer || !L) return;
+    layer.clearLayers();
+
+    if (!showRegistryOverlay) return;
+
+    existingParcels.forEach((parcel) => {
+      const isSold = parcel.saleStatus === 'sold';
+      const color = isSold ? '#F43F5E' : '#10B981';
+
+      if (parcel.polygon && parcel.polygon.length >= 3) {
+        const poly = L.polygon(
+          parcel.polygon.map((p) => [p.lat, p.lng] as [number, number]),
+          {
+            color,
+            weight: 2,
+            opacity: 0.85,
+            fillColor: color,
+            fillOpacity: 0.16,
+            interactive: true,
+          },
+        );
+        poly.on('click', () => onSelectExistingRef.current(parcel));
+        poly.addTo(layer);
+      }
+
+      if (parcel.lat !== undefined && parcel.lng !== undefined) {
+        const marker = L.marker([parcel.lat, parcel.lng], {
+          title: `${parcel.title} (${parcel.parcelRef})`,
+          icon: L.divIcon({
+            className: 'anagu-existing-pin',
+            html: `<div style="transform:translate(-50%,-50%);width:11px;height:11px;border-radius:9999px;background:${color};border:2px solid #020305;box-shadow:0 2px 6px rgba(0,0,0,0.65);cursor:pointer;"></div>`,
+            iconSize: [0, 0],
+          }),
+        });
+        marker.on('click', () => onSelectExistingRef.current(parcel));
+        marker.addTo(layer);
+      }
+    });
+  }, [showRegistryOverlay, existingParcels, mapReady]);
+
+  useEffect(() => {
+    const gisLayer = gisLayerRef.current;
+    const L = leafletRef.current;
+    if (!mapReady || !gisLayer || !L) return;
+
+    gisLayer.clearLayers();
+
+    const activeColor = isOverlapping ? '#F59E0B' : '#38BDF8';
+    if (polygonVertices.length >= 3) {
+      L.polygon(
+        polygonVertices.map((p) => [p.lat, p.lng] as [number, number]),
+        {
+          color: activeColor,
+          weight: 3,
+          opacity: 0.95,
+          fillColor: activeColor,
+          fillOpacity: 0.24,
+        },
+      ).addTo(gisLayer);
+
+      polygonVertices.forEach((pt, idx) => {
+        const cornerMarker = L.marker([pt.lat, pt.lng], {
+          draggable: true,
+          zIndexOffset: 400,
+          title: `Corner C${idx + 1} (${pt.lat.toFixed(6)}, ${pt.lng.toFixed(6)}) — drag to adjust`,
+          icon: L.divIcon({
+            className: 'anagu-corner-beacon',
+            html: `<div style="transform:translate(-50%,-50%);padding:1px 6px;border-radius:5px;background:${activeColor};color:#020305;border:1.5px solid #020305;font-family:monospace;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.7);cursor:grab;">C${idx + 1}</div>`,
+            iconSize: [0, 0],
+          }),
+        });
+
+        cornerMarker.on('dragend', () => {
+          const next = cornerMarker.getLatLng();
+          onCornerDragRef.current(idx, { lat: next.lat, lng: next.lng });
+        });
+        cornerMarker.addTo(gisLayer);
+      });
+
+      if (polygonVertices.length <= 8) {
+        edgeMeasurements.forEach((edge) => {
+          L.marker([edge.midpoint.lat, edge.midpoint.lng], {
+            interactive: false,
+            zIndexOffset: 300,
+            icon: L.divIcon({
+              className: 'anagu-edge-label',
+              html: `<div style="transform:translate(-50%,-50%);padding:1px 5px;border-radius:4px;background:rgba(2,3,5,0.9);color:#67E8F9;border:1px solid rgba(56,189,248,0.5);font-family:monospace;font-size:10px;font-weight:600;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.65);">${edge.lengthMeters.toFixed(1)} m</div>`,
+              iconSize: [0, 0],
+            }),
+          }).addTo(gisLayer);
+        });
+      }
+    }
+
+    if (pinPosition) {
+      const centerMarker = L.marker([pinPosition.lat, pinPosition.lng], {
+        draggable: true,
+        zIndexOffset: 350,
+        title: 'Land Center Pin (drag to move)',
+        icon: L.divIcon({
+          className: 'anagu-center-pin',
+          html: `<div style="transform:translate(-50%,-50%);width:16px;height:16px;border-radius:9999px;background:#38BDF8;border:3px solid #020305;box-shadow:0 0 14px rgba(56,189,248,0.9);cursor:grab;"></div>`,
+          iconSize: [0, 0],
+        }),
+      });
+      centerMarker.on('dragend', () => {
+        const next = centerMarker.getLatLng();
+        onPinDragEndRef.current({ lat: next.lat, lng: next.lng });
+      });
+      centerMarker.addTo(gisLayer);
+    }
+  }, [polygonVertices, pinPosition, isOverlapping, edgeMeasurements, mapReady]);
+
+  return <div ref={containerRef} className="h-full w-full" />;
+}
 
 export interface GisMeasurementPayload {
   areaSqm: number | null;
@@ -362,24 +644,19 @@ export function LandGisMapper({
 
       {/* OpenMap + Leaflet GIS Canvas Container */}
       <div className="relative h-[420px] lg:h-[480px] w-full rounded-[10px] overflow-hidden border border-[rgba(91,133,167,0.28)] bg-[#05080D]">
-        <OpenMapGisCanvas
+        <OpenMapGisCanvasInline
           layerId={layerId}
-          toolMode="pan"
           isVisible={isVisible}
           viewCommand={viewCommand}
           showRegistryOverlay={showRegistryOverlay}
           existingParcels={existingParcels}
-          draftVertices={[]}
           polygonVertices={polygonVertices}
           pinPosition={pinPosition}
           isOverlapping={overlappingParcels.length > 0}
           edgeMeasurements={edgeMeasurements}
           onCursorMove={setCursorCoords}
           onZoomChange={setMapZoom}
-          onPinDrop={() => {}}
           onPinDragEnd={handlePinDragEnd}
-          onAddDraftVertex={() => {}}
-          onFinishDraft={() => {}}
           onCornerDrag={handleCornerDrag}
           onSelectExistingParcel={(parcel) => setSelectedExistingParcel(parcel)}
         />

@@ -1,20 +1,178 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import dynamic from 'next/dynamic';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import type * as LeafletNS from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { Eye, ShoppingBag, MapPin, Maximize2, X, Compass } from 'lucide-react';
-import { computePolygonCentroid, formatCoordinateString, type LatLngPoint } from '@/lib/gis-utils';
-import { OPEN_MAP_LAYERS, type OpenMapLayerId } from '@/lib/openmap-tiles';
+import {
+  NIGERIA_DEFAULT_CENTER,
+  computePolygonCentroid,
+  formatCoordinateString,
+  type LatLngPoint,
+} from '@/lib/gis-utils';
+import {
+  OPEN_MAP_LAYERS,
+  createOpenMapTileLayer,
+  type OpenMapLayerId,
+} from '@/lib/openmap-tiles';
 import { formatNaira, type LandListing } from '@/lib/land-store';
 
-const ExploreParcelsMapCanvas = dynamic(() => import('./ExploreParcelsMapCanvas'), {
-  ssr: false,
-  loading: () => (
-    <div className="h-full w-full bg-[#05080D] flex items-center justify-center text-xs font-mono text-[#94A3B8] animate-pulse">
-      Loading OpenMap GIS Explorer…
-    </div>
-  ),
-});
+interface MappableParcelItem {
+  parcel: LandListing;
+  position: LatLngPoint;
+}
+
+function ExploreParcelsMapCanvasInline({
+  mappableParcels,
+  layerId,
+  activeParcelId,
+  fitSignal,
+  onSelectParcel,
+  onCursorMove,
+}: {
+  mappableParcels: MappableParcelItem[];
+  layerId: OpenMapLayerId;
+  activeParcelId: string | null;
+  fitSignal: number;
+  onSelectParcel: (parcel: LandListing) => void;
+  onCursorMove?: (pt: LatLngPoint | null) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const leafletRef = useRef<typeof LeafletNS | null>(null);
+  const mapRef = useRef<LeafletNS.Map | null>(null);
+  const baseLayerRef = useRef<LeafletNS.LayerGroup | null>(null);
+  const overlayLayerRef = useRef<LeafletNS.LayerGroup | null>(null);
+  const onSelectRef = useRef(onSelectParcel);
+  const onCursorMoveRef = useRef(onCursorMove);
+  const [mapReady, setMapReady] = useState(false);
+
+  onSelectRef.current = onSelectParcel;
+  onCursorMoveRef.current = onCursorMove;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const leafletMod = await import('leaflet');
+      const L = (leafletMod.default ?? leafletMod) as typeof LeafletNS;
+      if (cancelled || !containerRef.current || mapRef.current) return;
+
+      leafletRef.current = L;
+      const map = L.map(containerRef.current, {
+        center: [NIGERIA_DEFAULT_CENTER.lat, NIGERIA_DEFAULT_CENTER.lng],
+        zoom: 6,
+        zoomControl: true,
+      });
+
+      L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(map);
+
+      map.on('mousemove', (e: LeafletNS.LeafletMouseEvent) => {
+        onCursorMoveRef.current?.({ lat: e.latlng.lat, lng: e.latlng.lng });
+      });
+      map.on('mouseout', () => {
+        onCursorMoveRef.current?.(null);
+      });
+
+      const overlayGroup = L.layerGroup().addTo(map);
+      mapRef.current = map;
+      overlayLayerRef.current = overlayGroup;
+      setMapReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+      baseLayerRef.current = null;
+      overlayLayerRef.current = null;
+      setMapReady(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = leafletRef.current;
+    if (!mapReady || !map || !L) return;
+
+    if (baseLayerRef.current) {
+      map.removeLayer(baseLayerRef.current);
+    }
+    const nextLayer = createOpenMapTileLayer(L, layerId);
+    nextLayer.addTo(map);
+    baseLayerRef.current = nextLayer;
+  }, [layerId, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = leafletRef.current;
+    const overlay = overlayLayerRef.current;
+    if (!mapReady || !map || !L || !overlay) return;
+
+    overlay.clearLayers();
+
+    mappableParcels.forEach(({ parcel, position }) => {
+      const isSold = parcel.saleStatus === 'sold';
+      const isActive = activeParcelId === parcel.id;
+      const stroke = isSold ? '#F43F5E' : isActive ? '#67E8F9' : '#38BDF8';
+
+      if (parcel.polygon && parcel.polygon.length >= 3) {
+        const poly = L.polygon(
+          parcel.polygon.map((p) => [p.lat, p.lng] as [number, number]),
+          {
+            color: stroke,
+            weight: isActive ? 3.5 : 2.5,
+            opacity: 0.95,
+            fillColor: stroke,
+            fillOpacity: isActive ? 0.36 : 0.24,
+          },
+        );
+        poly.on('click', () => onSelectRef.current(parcel));
+        poly.addTo(overlay);
+      }
+
+      const priceText = isSold ? 'SOLD' : formatNaira(parcel.priceNgn);
+      const badgeBg = isSold
+        ? 'background:#1E293B;color:#FDA4AF;border:1px solid rgba(244,63,94,0.55);'
+        : isActive
+          ? 'background:#38BDF8;color:#020305;border:1.5px solid #F4F7FB;'
+          : 'background:#020305;color:#67E8F9;border:1.5px solid #38BDF8;';
+
+      const marker = L.marker([position.lat, position.lng], {
+        title: parcel.title,
+        icon: L.divIcon({
+          className: 'anagu-parcel-badge',
+          html: `<div style="transform:translate(-50%,-50%);padding:3px 8px;border-radius:7px;font-family:monospace;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,0.65);cursor:pointer;${badgeBg}">${priceText}</div>`,
+          iconSize: [0, 0],
+        }),
+      });
+      marker.on('click', () => onSelectRef.current(parcel));
+      marker.addTo(overlay);
+    });
+  }, [mappableParcels, activeParcelId, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = leafletRef.current;
+    if (!mapReady || !map || !L || mappableParcels.length === 0) return;
+
+    if (mappableParcels.length === 1) {
+      map.setView(
+        [mappableParcels[0].position.lat, mappableParcels[0].position.lng],
+        15,
+      );
+      return;
+    }
+
+    const bounds = L.latLngBounds(
+      mappableParcels.map((m) => [m.position.lat, m.position.lng] as [number, number]),
+    );
+    map.fitBounds(bounds, { padding: [48, 48], maxZoom: 16 });
+  }, [mappableParcels, fitSignal, mapReady]);
+
+  return <div ref={containerRef} className="h-full w-full" />;
+}
 
 interface ExploreParcelsMapProps {
   parcels: LandListing[];
@@ -84,7 +242,7 @@ export function ExploreParcelsMap({ parcels, onInspect, onBuy }: ExploreParcelsM
       </div>
 
       <div className="relative h-[540px] w-full rounded-[12px] overflow-hidden border border-[rgba(91,133,167,0.28)] bg-[#05080D]">
-        <ExploreParcelsMapCanvas
+        <ExploreParcelsMapCanvasInline
           mappableParcels={mappableParcels}
           layerId={layerId}
           activeParcelId={activeParcel?.id ?? null}
@@ -163,4 +321,3 @@ export function ExploreParcelsMap({ parcels, onInspect, onBuy }: ExploreParcelsM
 }
 
 export default ExploreParcelsMap;
-
