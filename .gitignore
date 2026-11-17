@@ -76,3 +76,7 @@ Thumbs.db
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Next.js development builds
+.next-dev
+frontend/web/.next-dev
