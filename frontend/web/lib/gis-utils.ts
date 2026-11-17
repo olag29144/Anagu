@@ -593,3 +593,276 @@ export function computeFourCornerPolygonFromDimensions(
 
   return { corners };
 }
+
+function latLngToWorldPx(lat: number, lng: number, zoom: number): { x: number; y: number } {
+  const scale = 256 * Math.pow(2, zoom);
+  const clampedLat = Math.max(-85.0511, Math.min(85.0511, lat));
+  const sinLat = Math.sin((clampedLat * Math.PI) / 180);
+  const x = ((lng + 180) / 360) * scale;
+  const y = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * scale;
+  return { x, y };
+}
+
+function getTileUrlsForLayer(
+  layerId: 'osm' | 'hybrid' | 'satellite' | 'terrain' | 'dark',
+  z: number,
+  x: number,
+  y: number,
+): string[] {
+  switch (layerId) {
+    case 'satellite':
+      return [
+        `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
+      ];
+    case 'hybrid':
+      return [
+        `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
+        `https://a.basemaps.cartocdn.com/light_only_labels/${z}/${x}/${y}.png`,
+      ];
+    case 'terrain':
+      return [`https://a.tile.opentopomap.org/${z}/${x}/${y}.png`];
+    case 'dark':
+      return [`https://a.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`];
+    case 'osm':
+    default:
+      return [`https://tile.openstreetmap.org/${z}/${x}/${y}.png`];
+  }
+}
+
+function loadCorsImage(url: string, timeoutMs = 3500): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, timeoutMs);
+
+    img.onload = () => {
+      if (!settled) {
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(img);
+      }
+    };
+    img.onerror = () => {
+      if (!settled) {
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(null);
+      }
+    };
+    img.src = url;
+  });
+}
+
+/**
+ * Renders an 800x600 (4:3) map snapshot of the parcel polygon & map tiles onto an offscreen canvas
+ * and returns a compact JPEG data URL suitable for Explore Land cards and localStorage persistence.
+ */
+export async function captureParcelMapSnapshot(options: {
+  polygon: LatLngPoint[];
+  center?: LatLngPoint | null;
+  layerId?: 'osm' | 'hybrid' | 'satellite' | 'terrain' | 'dark';
+}): Promise<string | null> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+
+  const { polygon, center, layerId = 'osm' } = options;
+  const points = polygon.length >= 3 ? polygon : center ? [center] : [];
+  if (points.length === 0) return null;
+
+  const width = 800;
+  const height = 600;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const lats = points.map((p) => p.lat);
+  const lngs = points.map((p) => p.lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+
+  const maxZoomAllowed = layerId === 'terrain' ? 16 : layerId === 'satellite' || layerId === 'hybrid' ? 17 : 18;
+  let chosenZoom = polygon.length >= 3 ? maxZoomAllowed : 16;
+
+  if (polygon.length >= 3) {
+    for (let z = maxZoomAllowed; z >= 5; z--) {
+      const topLeft = latLngToWorldPx(maxLat, minLng, z);
+      const bottomRight = latLngToWorldPx(minLat, maxLng, z);
+      const dx = Math.abs(bottomRight.x - topLeft.x);
+      const dy = Math.abs(bottomRight.y - topLeft.y);
+      if (dx <= width * 0.62 && dy <= height * 0.62) {
+        chosenZoom = z;
+        break;
+      }
+    }
+  }
+
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLng = (minLng + maxLng) / 2;
+  const centerWorld = latLngToWorldPx(centerLat, centerLng, chosenZoom);
+  const originX = centerWorld.x - width / 2;
+  const originY = centerWorld.y - height / 2;
+
+  // Fallback GIS backdrop
+  ctx.fillStyle = '#05080D';
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
+  ctx.lineWidth = 1;
+  for (let gx = 0; gx < width; gx += 40) {
+    ctx.beginPath();
+    ctx.moveTo(gx, 0);
+    ctx.lineTo(gx, height);
+    ctx.stroke();
+  }
+  for (let gy = 0; gy < height; gy += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, gy);
+    ctx.lineTo(width, gy);
+    ctx.stroke();
+  }
+
+  // Fetch & draw Web Mercator tiles
+  const minTx = Math.floor(originX / 256);
+  const maxTx = Math.floor((originX + width) / 256);
+  const minTy = Math.floor(originY / 256);
+  const maxTy = Math.floor((originY + height) / 256);
+  const tileCount = 1 << chosenZoom;
+
+  const tileDrawJobs: Array<{
+    px: number;
+    py: number;
+    urls: string[];
+  }> = [];
+
+  for (let tx = minTx; tx <= maxTx; tx++) {
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      if (ty < 0 || ty >= tileCount) continue;
+      const wrappedTx = ((tx % tileCount) + tileCount) % tileCount;
+      tileDrawJobs.push({
+        px: tx * 256 - originX,
+        py: ty * 256 - originY,
+        urls: getTileUrlsForLayer(layerId, chosenZoom, wrappedTx, ty),
+      });
+    }
+  }
+
+  const loadedTiles = await Promise.all(
+    tileDrawJobs.map(async (job) => {
+      const imgs = await Promise.all(job.urls.map((u) => loadCorsImage(u)));
+      return { ...job, imgs };
+    }),
+  );
+
+  for (const tile of loadedTiles) {
+    for (const img of tile.imgs) {
+      if (img) {
+        try {
+          ctx.drawImage(img, tile.px, tile.py, 256, 256);
+        } catch {
+          // Ignore individual tile draw errors
+        }
+      }
+    }
+  }
+
+  // Draw parcel polygon, edges, and corner beacons
+  const toCanvasPt = (pt: LatLngPoint) => {
+    const w = latLngToWorldPx(pt.lat, pt.lng, chosenZoom);
+    return { x: w.x - originX, y: w.y - originY };
+  };
+
+  if (polygon.length >= 3) {
+    const canvasPts = polygon.map(toCanvasPt);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(canvasPts[0].x, canvasPts[0].y);
+    for (let i = 1; i < canvasPts.length; i++) {
+      ctx.lineTo(canvasPts[i].x, canvasPts[i].y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
+    ctx.fill();
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = '#38BDF8';
+    ctx.stroke();
+    ctx.restore();
+
+    // Edge distance labels
+    if (polygon.length <= 8) {
+      const edges = computeEdgeMeasurements(polygon);
+      ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      edges.forEach((edge) => {
+        const mid = toCanvasPt(edge.midpoint);
+        const text = `${edge.lengthMeters.toFixed(1)} m`;
+        const metrics = ctx.measureText(text);
+        const bw = metrics.width + 10;
+        const bh = 18;
+        ctx.fillStyle = 'rgba(2, 3, 5, 0.88)';
+        ctx.fillRect(mid.x - bw / 2, mid.y - bh / 2, bw, bh);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(mid.x - bw / 2, mid.y - bh / 2, bw, bh);
+        ctx.fillStyle = '#67E8F9';
+        ctx.fillText(text, mid.x, mid.y + 0.5);
+      });
+    }
+
+    // Corner badges C1..Cn
+    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    canvasPts.forEach((pt, idx) => {
+      const label = `C${idx + 1}`;
+      const bw = 24;
+      const bh = 18;
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(pt.x - bw / 2, pt.y - bh / 2, bw, bh);
+      ctx.strokeStyle = '#020305';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(pt.x - bw / 2, pt.y - bh / 2, bw, bh);
+      ctx.fillStyle = '#020305';
+      ctx.fillText(label, pt.x, pt.y + 0.5);
+    });
+  }
+
+  // Center pin marker
+  const pinPt = toCanvasPt(center ?? { lat: centerLat, lng: centerLng });
+  ctx.beginPath();
+  ctx.arc(pinPt.x, pinPt.y, 7, 0, Math.PI * 2);
+  ctx.fillStyle = '#38BDF8';
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#020305';
+  ctx.stroke();
+
+  // Subtle top-left GIS stamp
+  ctx.fillStyle = 'rgba(2, 3, 5, 0.78)';
+  ctx.fillRect(14, 14, 152, 24);
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(14, 14, 152, 24);
+  ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#67E8F9';
+  ctx.fillText('ANAGU OPENMAP GIS', 24, 26);
+
+  try {
+    return canvas.toDataURL('image/jpeg', 0.86);
+  } catch {
+    return null;
+  }
+}
+

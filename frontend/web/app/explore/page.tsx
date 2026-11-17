@@ -5,8 +5,10 @@ import Link from 'next/link';
 import { Navbar } from '@/components/landing/Navbar';
 import {
   getLandListings,
+  getListingPriceUsd,
   createPurchaseOrder,
-  formatNaira,
+  formatUsd,
+  formatEthFromUsd,
   formatFileSize,
   type LandListing,
   type LandCategory,
@@ -208,8 +210,8 @@ export default function ExploreLandPage() {
     });
 
     return [...filtered].sort((a, b) => {
-      if (sortBy === 'price_asc') return a.priceNgn - b.priceNgn;
-      if (sortBy === 'price_desc') return b.priceNgn - a.priceNgn;
+      if (sortBy === 'price_asc') return getListingPriceUsd(a) - getListingPriceUsd(b);
+      if (sortBy === 'price_desc') return getListingPriceUsd(b) - getListingPriceUsd(a);
       if (sortBy === 'area_desc') return b.areaSqm - a.areaSqm;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
@@ -315,6 +317,7 @@ export default function ExploreLandPage() {
             location: `${buyParcel.location}, ${buyParcel.state}`,
             areaSqm: buyParcel.areaSqm,
             priceNgn: buyParcel.priceNgn,
+            priceUsd: getListingPriceUsd(buyParcel),
             buyerName: buyerName.trim(),
             sellerWalletAddress: buyParcel.ownerWalletAddress,
           });
@@ -323,6 +326,7 @@ export default function ExploreLandPage() {
             address: activeConnected.address,
             parcelRef: buyParcel.parcelRef,
             priceNgn: buyParcel.priceNgn,
+            priceUsd: getListingPriceUsd(buyParcel),
             sellerWalletAddress: buyParcel.ownerWalletAddress,
           });
         }
@@ -339,6 +343,7 @@ export default function ExploreLandPage() {
       landTitle: buyParcel.title,
       parcelRef: buyParcel.parcelRef,
       priceNgn: buyParcel.priceNgn,
+      priceUsd: getListingPriceUsd(buyParcel),
       buyerName: buyerName.trim(),
       buyerEmail: buyerEmail.trim(),
       buyerPhone: buyerPhone.trim(),
@@ -583,6 +588,16 @@ export default function ExploreLandPage() {
                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-[#020305]/85 via-[#020305]/20 to-transparent" />
+                      {getListingPriceUsd(parcel) > 0 && (
+                        <div className="absolute top-3 right-3 rounded-md bg-[#020305]/85 backdrop-blur-md border border-[#38BDF8]/40 px-2.5 py-1 text-right font-mono tabular-nums shadow-lg">
+                          <p className="text-xs font-bold text-[#F4F7FB]">
+                            {formatUsd(getListingPriceUsd(parcel))}
+                          </p>
+                          <p className="text-[10px] font-semibold text-[#67E8F9]">
+                            {formatEthFromUsd(getListingPriceUsd(parcel), 2)}
+                          </p>
+                        </div>
+                      )}
                       <div className="absolute bottom-3 left-4 right-4 flex items-end justify-between gap-2">
                         <span className="text-xs font-mono text-[#E2E8F0]">
                           {parcel.state} · {parcel.category}
@@ -630,9 +645,14 @@ export default function ExploreLandPage() {
                       <div className="pt-3 border-t border-[rgba(91,133,167,0.14)] flex items-center justify-between gap-3">
                         <div>
                           <p className="text-[11px] text-[#64748B]">Asking Price</p>
-                          <p className="text-lg font-bold font-mono tabular-nums text-[#F4F7FB]">
-                            {formatNaira(parcel.priceNgn)}
+                          <p className="text-lg font-bold font-mono tabular-nums text-[#F4F7FB] leading-tight">
+                            {formatUsd(getListingPriceUsd(parcel))}
                           </p>
+                          {getListingPriceUsd(parcel) > 0 && (
+                            <p className="text-xs font-mono tabular-nums text-[#38BDF8]">
+                              ≈ {formatEthFromUsd(getListingPriceUsd(parcel))}
+                            </p>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
@@ -748,8 +768,13 @@ export default function ExploreLandPage() {
                 <div className="sm:text-right">
                   <p className="text-xs text-[#64748B]">Price</p>
                   <p className="text-2xl font-bold font-mono tabular-nums text-[#F4F7FB]">
-                    {formatNaira(inspectParcel.priceNgn)}
+                    {formatUsd(getListingPriceUsd(inspectParcel))}
                   </p>
+                  {getListingPriceUsd(inspectParcel) > 0 && (
+                    <p className="text-xs font-mono tabular-nums text-[#38BDF8] mt-0.5">
+                      ≈ {formatEthFromUsd(getListingPriceUsd(inspectParcel))}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -887,7 +912,13 @@ export default function ExploreLandPage() {
                     Buyer: <span className="text-[#F4F7FB]">{completedOrder.buyerName}</span>
                   </p>
                   <p className="text-[#94A3B8]">
-                    Settlement Amount: <span className="font-mono text-[#F4F7FB]">{formatNaira(completedOrder.priceNgn)}</span>
+                    Settlement Amount:{' '}
+                    <span className="font-mono text-[#F4F7FB]">
+                      {formatUsd(getListingPriceUsd(completedOrder))}
+                    </span>{' '}
+                    <span className="font-mono text-[#38BDF8]">
+                      ({formatEthFromUsd(getListingPriceUsd(completedOrder))})
+                    </span>
                   </p>
                   <p className="text-[#94A3B8]">
                     Method: <span className="text-[#F4F7FB]">{completedOrder.paymentMethod}</span>
@@ -935,13 +966,18 @@ export default function ExploreLandPage() {
               </div>
             ) : (
               <form onSubmit={handlePurchaseSubmit} className="mt-5 space-y-4">
-                <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.18)] p-3.5 flex items-center justify-between text-xs">
+                <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.18)] p-3.5 flex items-center justify-between gap-3 text-xs">
                   <span className="text-[#94A3B8]">
                     {buyParcel.location} · {buyParcel.areaSqm.toLocaleString()} sqm
                   </span>
-                  <span className="font-mono font-bold text-[#38BDF8] tabular-nums">
-                    {formatNaira(buyParcel.priceNgn)}
-                  </span>
+                  <div className="text-right font-mono tabular-nums shrink-0">
+                    <p className="font-bold text-[#F4F7FB]">
+                      {formatUsd(getListingPriceUsd(buyParcel))}
+                    </p>
+                    <p className="text-[11px] font-semibold text-[#38BDF8]">
+                      ≈ {formatEthFromUsd(getListingPriceUsd(buyParcel))}
+                    </p>
+                  </div>
                 </div>
 
                 {/* Web3 Wallet Connection & Trigger Panel */}

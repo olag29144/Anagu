@@ -8,8 +8,11 @@ import {
   addLandListing,
   getPurchaseOrders,
   savePurchaseOrders,
-  formatNaira,
+  getListingPriceUsd,
+  formatUsd,
+  formatEthFromUsd,
   formatFileSize,
+  NGN_PER_USD,
   type LandListing,
   type LandCategory,
   type LandDocument,
@@ -176,7 +179,8 @@ export default function StandaloneAdminPage() {
       category: newCategory,
       documentType: 'Certificate of Occupancy (C of O)',
       documentNumber: newDocRef.trim() || `ADM/COFO/${Date.now().toString().slice(-4)}`,
-      priceNgn: Number(newPrice) || 75000000,
+      priceUsd: Number(newPrice) || 50000,
+      priceNgn: (Number(newPrice) || 50000) * NGN_PER_USD,
       forSale: true,
       saleStatus: 'available',
       approvalStatus: 'approved',
@@ -473,8 +477,8 @@ export default function StandaloneAdminPage() {
                         <span className="text-slate-400">
                           {parcel.forSale
                             ? parcel.saleStatus === 'sold'
-                              ? `Sold (${formatNaira(parcel.priceNgn)})`
-                              : `For Sale (${formatNaira(parcel.priceNgn)})`
+                              ? `Sold (${formatUsd(getListingPriceUsd(parcel))} · ${formatEthFromUsd(getListingPriceUsd(parcel), 2)})`
+                              : `For Sale (${formatUsd(getListingPriceUsd(parcel))} · ${formatEthFromUsd(getListingPriceUsd(parcel), 2)})`
                             : 'Not Listed for Sale'}
                         </span>
                       </div>
@@ -609,7 +613,10 @@ export default function StandaloneAdminPage() {
                           {parcel.areaSqm.toLocaleString()} sqm
                         </td>
                         <td className="px-5 py-4 font-mono tabular-nums text-white font-semibold">
-                          {formatNaira(parcel.priceNgn)}
+                          <p>{formatUsd(getListingPriceUsd(parcel))}</p>
+                          <p className="text-[11px] font-normal text-sky-400">
+                            {formatEthFromUsd(getListingPriceUsd(parcel))}
+                          </p>
                         </td>
                         <td className="px-5 py-4">
                           <span
@@ -675,7 +682,10 @@ export default function StandaloneAdminPage() {
                           <p className="font-mono text-slate-400">{order.parcelRef}</p>
                         </td>
                         <td className="px-5 py-4 font-mono tabular-nums text-white font-semibold">
-                          {formatNaira(order.priceNgn)}
+                          <p>{formatUsd(getListingPriceUsd(order))}</p>
+                          <p className="text-[11px] font-normal text-sky-400">
+                            {formatEthFromUsd(getListingPriceUsd(order))}
+                          </p>
                         </td>
                         <td className="px-5 py-4">
                           <p className="text-slate-300">{order.paymentMethod}</p>
@@ -854,12 +864,12 @@ export default function StandaloneAdminPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">Price (NGN)</label>
+                  <label className="block text-xs text-slate-400 mb-1">Price (USD $)</label>
                   <input
                     type="number"
                     value={newPrice}
                     onChange={(e) => setNewPrice(e.target.value)}
-                    placeholder="120000000"
+                    placeholder="75000"
                     className="w-full h-10 px-3 rounded-lg bg-[#070B12] border border-slate-700 text-white font-mono"
                   />
                 </div>

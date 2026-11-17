@@ -8,7 +8,12 @@ import {
   createOpenMapTileLayer,
   type OpenMapLayerId,
 } from '@/lib/openmap-tiles';
-import { formatNaira, type LandListing } from '@/lib/land-store';
+import {
+  formatEthFromUsd,
+  formatUsd,
+  getListingPriceUsd,
+  type LandListing,
+} from '@/lib/land-store';
 
 export interface MappableParcelItem {
   parcel: LandListing;
@@ -111,7 +116,10 @@ export default function ExploreParcelsMapCanvas({
         poly.addTo(overlay);
       }
 
-      const priceText = isSold ? 'SOLD' : formatNaira(parcel.priceNgn);
+      const parcelUsd = getListingPriceUsd(parcel);
+      const priceText = isSold
+        ? 'SOLD'
+        : `${formatUsd(parcelUsd)} · ${formatEthFromUsd(parcelUsd, 2)}`;
       const badgeBg = isSold
         ? 'background:#1E293B;color:#FDA4AF;border:1px solid rgba(244,63,94,0.55);'
         : isActive

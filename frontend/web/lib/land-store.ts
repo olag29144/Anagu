@@ -35,6 +35,7 @@ export interface LandListing {
   documentType: string;
   documentNumber: string;
   priceNgn: number;
+  priceUsd?: number;
   forSale: boolean;
   saleStatus: 'available' | 'sold' | 'not_for_sale';
   approvalStatus: 'approved' | 'pending_review' | 'rejected';
@@ -62,6 +63,7 @@ export interface LandPurchaseOrder {
   landTitle: string;
   parcelRef: string;
   priceNgn: number;
+  priceUsd?: number;
   buyerName: string;
   buyerEmail: string;
   buyerPhone: string;
@@ -476,9 +478,16 @@ export function addLandListing(
   const firstImageDoc = input.documents.find(
     (d) => d.type.startsWith('image/') && d.dataUrl,
   );
+  const resolvedUsd =
+    input.priceUsd !== undefined
+      ? input.priceUsd
+      : input.priceNgn > 0
+        ? Math.round(input.priceNgn / NGN_PER_USD)
+        : 0;
 
   const newListing: LandListing = {
     ...input,
+    priceUsd: resolvedUsd,
     id: `LND-${new Date().getFullYear()}-${num}`,
     parcelRef: input.parcelRef?.trim() || `NG-${stateCode}-LND-${new Date().getFullYear()}-${num}`,
     imageUrl:
@@ -546,6 +555,44 @@ export function createPurchaseOrder(
   savePurchaseOrders([order, ...orders]);
   updateLandListing(input.landId, { saleStatus: 'sold' });
   return order;
+}
+
+export const NGN_PER_USD = 1600;
+export const USD_PER_ETH = 3200;
+
+export function getListingPriceUsd(item: {
+  priceUsd?: number;
+  priceNgn?: number;
+}): number {
+  if (typeof item.priceUsd === 'number' && item.priceUsd > 0) {
+    return item.priceUsd;
+  }
+  if (typeof item.priceNgn === 'number' && item.priceNgn > 0) {
+    return Math.round(item.priceNgn / NGN_PER_USD);
+  }
+  return 0;
+}
+
+export function usdToEth(usdAmount: number): number {
+  if (!usdAmount || Number.isNaN(usdAmount) || usdAmount <= 0) return 0;
+  return usdAmount / USD_PER_ETH;
+}
+
+export function formatUsd(usdAmount: number): string {
+  if (!usdAmount || Number.isNaN(usdAmount) || usdAmount <= 0) {
+    return 'Price on request';
+  }
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(usdAmount);
+}
+
+export function formatEthFromUsd(usdAmount: number, decimals = 4): string {
+  const eth = usdToEth(usdAmount);
+  if (!eth || eth <= 0) return '0.0000 ETH';
+  return `${eth.toFixed(decimals)} ETH`;
 }
 
 export function formatNaira(amount: number): string {

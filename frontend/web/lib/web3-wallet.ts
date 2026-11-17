@@ -301,6 +301,7 @@ export async function signLandPurchaseAuthorization(
     location: string;
     areaSqm: number;
     priceNgn: number;
+    priceUsd?: number;
     buyerName: string;
     sellerWalletAddress?: string;
   },
@@ -310,6 +311,12 @@ export async function signLandPurchaseAuthorization(
       ? params.sellerWalletAddress
       : ANAGU_ESCROW_ADDRESS;
 
+  const resolvedUsd =
+    params.priceUsd && params.priceUsd > 0
+      ? params.priceUsd
+      : Math.round((params.priceNgn || 0) / 1600);
+  const ethAmount = resolvedUsd > 0 ? (resolvedUsd / 3200).toFixed(4) : '0.0000';
+
   const message = [
     'ANAGU STATUTORY LAND REGISTRY — PURCHASE AUTHORIZATION',
     '',
@@ -317,7 +324,7 @@ export async function signLandPurchaseAuthorization(
     `Parcel Title: ${params.landTitle}`,
     `Location: ${params.location}`,
     `Area: ${params.areaSqm.toLocaleString()} sqm`,
-    `Agreed Price: NGN ${params.priceNgn.toLocaleString()}`,
+    `Agreed Price: $${resolvedUsd.toLocaleString()} USD (${ethAmount} ETH)`,
     `Buyer: ${params.buyerName}`,
     `Buyer Wallet: ${params.address}`,
     `Recipient / Escrow: ${recipientAddress}`,
@@ -338,6 +345,7 @@ export async function sendLandPurchaseTransaction(
     address: string;
     parcelRef: string;
     priceNgn: number;
+    priceUsd?: number;
     sellerWalletAddress?: string;
   },
 ): Promise<string> {
@@ -346,8 +354,14 @@ export async function sendLandPurchaseTransaction(
       ? params.sellerWalletAddress
       : ANAGU_ESCROW_ADDRESS;
 
+  const resolvedUsd =
+    params.priceUsd && params.priceUsd > 0
+      ? params.priceUsd
+      : Math.round((params.priceNgn || 0) / 1600);
+  const ethAmount = resolvedUsd > 0 ? (resolvedUsd / 3200).toFixed(4) : '0.0000';
+
   const dataHex = toUtf8Hex(
-    `anagu:purchase:${params.parcelRef}:ngn:${params.priceNgn}:${Date.now()}`,
+    `anagu:purchase:${params.parcelRef}:usd:${resolvedUsd}:eth:${ethAmount}:${Date.now()}`,
   );
 
   const txHash = (await provider.request({

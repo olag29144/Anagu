@@ -5,18 +5,21 @@ import type * as LeafletNS from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
   AlertTriangle,
+  Camera,
   Check,
   CheckCircle2,
   Copy,
   Download,
   Eraser,
   Layers,
+  Loader2,
   Ruler,
   UploadCloud,
   X,
 } from 'lucide-react';
 import {
   NIGERIA_DEFAULT_CENTER,
+  captureParcelMapSnapshot,
   computeEdgeMeasurements,
   computePerimeterFallback,
   computePolygonCentroid,
@@ -328,6 +331,8 @@ export interface GisMeasurementPayload {
   lat: number | null;
   lng: number | null;
   polygon: LatLngPoint[];
+  mapSnapshotDataUrl?: string | null;
+  layerId?: OpenMapLayerId;
   suggestedLocation?: string;
   suggestedState?: string;
 }
@@ -368,6 +373,8 @@ export function LandGisMapper({
   const [importError, setImportError] = useState<string | null>(null);
   const [geoJsonCopied, setGeoJsonCopied] = useState(false);
   const [geoStatus, setGeoStatus] = useState<string | null>(null);
+  const [mapSnapshotUrl, setMapSnapshotUrl] = useState<string | null>(null);
+  const [capturingSnapshot, setCapturingSnapshot] = useState(false);
 
   const fitMapToPolygon = useCallback((points: LatLngPoint[]) => {
     if (points.length === 0) return;
@@ -392,6 +399,8 @@ export function LandGisMapper({
     setImportError(null);
     setGeoStatus(null);
     setSelectedExistingParcel(null);
+    setMapSnapshotUrl(null);
+    setCapturingSnapshot(false);
   }, [resetSignal]);
 
   // Compute spherical GIS area & perimeter
@@ -418,6 +427,56 @@ export function LandGisMapper({
     };
   }, [polygonVertices, pinPosition]);
 
+  const runSnapshotCapture = useCallback(
+    async (poly: LatLngPoint[], center: LatLngPoint | null, activeLayer: OpenMapLayerId) => {
+      if (poly.length < 3 && !center) {
+        setMapSnapshotUrl(null);
+        return;
+      }
+      setCapturingSnapshot(true);
+      try {
+        const snapshot = await captureParcelMapSnapshot({
+          polygon: poly,
+          center,
+          layerId: activeLayer,
+        });
+        setMapSnapshotUrl(snapshot);
+      } finally {
+        setCapturingSnapshot(false);
+      }
+    },
+    [],
+  );
+
+  // Automatically capture map picture whenever plot boundaries, center pin, or map layer changes
+  useEffect(() => {
+    if (polygonVertices.length < 3 && !pinPosition) {
+      setMapSnapshotUrl(null);
+      setCapturingSnapshot(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCapturingSnapshot(true);
+    const timer = window.setTimeout(() => {
+      void captureParcelMapSnapshot({
+        polygon: polygonVertices,
+        center: measurements.centroid ?? pinPosition,
+        layerId,
+      }).then((snapshot) => {
+        if (!cancelled) {
+          setMapSnapshotUrl(snapshot);
+          setCapturingSnapshot(false);
+        }
+      });
+    }, 150);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [polygonVertices, pinPosition, measurements.centroid, layerId]);
+
   // Emit spatial updates to parent registration form
   const onGisChangeRef = useRef(onGisChange);
   onGisChangeRef.current = onGisChange;
@@ -430,8 +489,10 @@ export function LandGisMapper({
       lat: measurements.centroid?.lat ?? null,
       lng: measurements.centroid?.lng ?? null,
       polygon: polygonVertices,
+      mapSnapshotDataUrl: mapSnapshotUrl,
+      layerId,
     });
-  }, [measurements, polygonVertices]);
+  }, [measurements, polygonVertices, mapSnapshotUrl, layerId]);
 
   const edgeMeasurements = useMemo(
     () => computeEdgeMeasurements(polygonVertices),
@@ -479,6 +540,7 @@ export function LandGisMapper({
   const handleClearBoundary = () => {
     setPolygonVertices([]);
     setPinPosition(null);
+    setMapSnapshotUrl(null);
     setImportError(null);
     setGeoStatus('Boundary cleared. Paste or upload GeoJSON / survey beacon coordinates above.');
   };
@@ -805,6 +867,60 @@ export function LandGisMapper({
             </div>
           </div>
         </div>
+
+        {(polygonVertices.length >= 3 || pinPosition) && (
+          <div className="mt-3 pt-3 border-t border-[rgba(91,133,167,0.14)] flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              {mapSnapshotUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={mapSnapshotUrl}
+                  alt="Captured OpenMap plot preview"
+                  className="h-14 w-[75px] rounded-md object-cover border border-[#38BDF8]/45 shrink-0 bg-[#020305]"
+                />
+              ) : (
+                <div className="h-14 w-[75px] rounded-md border border-[rgba(91,133,167,0.28)] bg-[#020305] flex items-center justify-center shrink-0">
+                  {capturingSnapshot ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-[#38BDF8]" />
+                  ) : (
+                    <Camera className="h-4 w-4 text-[#64748B]" />
+                  )}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-[#F4F7FB] flex items-center gap-1.5">
+                  <Camera className="h-3.5 w-3.5 text-[#38BDF8] shrink-0" />
+                  <span>
+                    {capturingSnapshot
+                      ? 'Capturing map picture…'
+                      : mapSnapshotUrl
+                        ? 'Map Picture Captured for Explore Land'
+                        : 'Ready to capture map picture'}
+                  </span>
+                </p>
+                <p className="text-[11px] text-[#64748B]">
+                  Automatically attached as this parcel&apos;s Explore Land display photo.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={capturingSnapshot}
+              onClick={() =>
+                void runSnapshotCapture(
+                  polygonVertices,
+                  measurements.centroid ?? pinPosition,
+                  layerId,
+                )
+              }
+              className="h-8 px-3 rounded-md bg-[#0A0F16] border border-[rgba(91,133,167,0.28)] text-[11px] font-medium text-[#67E8F9] hover:border-[#38BDF8] disabled:opacity-60 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            >
+              <Camera className="h-3.5 w-3.5" />
+              <span>{mapSnapshotUrl ? 'Re-capture Map' : 'Capture Map'}</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

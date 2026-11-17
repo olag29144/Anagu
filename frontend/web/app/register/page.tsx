@@ -10,13 +10,21 @@ import {
 import {
   addLandListing,
   getLandListings,
+  getListingPriceUsd,
   formatFileSize,
-  formatNaira,
+  formatUsd,
+  formatEthFromUsd,
+  NGN_PER_USD,
   type LandCategory,
   type LandDocument,
   type LandListing,
 } from '@/lib/land-store';
-import { formatPlotEquivalents, type LatLngPoint } from '@/lib/gis-utils';
+import {
+  captureParcelMapSnapshot,
+  formatPlotEquivalents,
+  type LatLngPoint,
+} from '@/lib/gis-utils';
+import type { OpenMapLayerId } from '@/lib/openmap-tiles';
 import {
   subscribeWalletDiscovery,
   getSnapshotDetectedWallets,
@@ -122,6 +130,13 @@ const STEPS: Array<{ id: RegistrationStep; label: string; shortLabel: string }> 
   { id: 4, label: 'Documents & Submit', shortLabel: '4. Upload' },
 ];
 
+function parseUsdInput(raw: string): number {
+  const cleaned = raw.replace(/[^0-9.]/g, '');
+  if (!cleaned) return 0;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+}
+
 export default function RegisterLandPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -149,7 +164,7 @@ export default function RegisterLandPage() {
   const [description, setDescription] = useState('');
 
   const [forSale, setForSale] = useState(true);
-  const [priceNgn, setPriceNgn] = useState('');
+  const [priceUsdInput, setPriceUsdInput] = useState('');
 
   // GIS Spatial State
   const [existingParcels, setExistingParcels] = useState<LandListing[]>([]);
@@ -157,6 +172,8 @@ export default function RegisterLandPage() {
   const [gisLng, setGisLng] = useState<number | undefined>(undefined);
   const [gisPolygon, setGisPolygon] = useState<LatLngPoint[]>([]);
   const [gisPerimeterMeters, setGisPerimeterMeters] = useState<number | undefined>(undefined);
+  const [gisMapImageUrl, setGisMapImageUrl] = useState<string | null>(null);
+  const [gisLayerId, setGisLayerId] = useState<OpenMapLayerId>('osm');
   const [gisResetSignal, setGisResetSignal] = useState(0);
 
   // Uploaded documents (any file type accepted; optional if not on hand)
@@ -189,6 +206,10 @@ export default function RegisterLandPage() {
     setGisLng(payload.lng ?? undefined);
     setGisPolygon(payload.polygon);
     setGisPerimeterMeters(payload.perimeterMeters ?? undefined);
+    setGisMapImageUrl(payload.mapSnapshotDataUrl ?? null);
+    if (payload.layerId) {
+      setGisLayerId(payload.layerId);
+    }
 
     if (payload.suggestedLocation) {
       setLocation(payload.suggestedLocation);
@@ -324,15 +345,15 @@ export default function RegisterLandPage() {
       setError('Please enter the land size in square meters (or tap a plot size button).');
       return;
     }
-    const parsedPrice = forSale ? Number(priceNgn) : 0;
-    if (forSale && (!parsedPrice || parsedPrice <= 0)) {
-      setError('Please enter your asking price in Naira, or uncheck "List this land for sale".');
+    const parsedPriceUsd = forSale ? parseUsdInput(priceUsdInput) : 0;
+    if (forSale && (!parsedPriceUsd || parsedPriceUsd <= 0)) {
+      setError('Please enter your asking price in USD ($), or uncheck "List this land for sale".');
       return;
     }
     goToStep(4);
   };
 
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
 
@@ -374,14 +395,33 @@ export default function RegisterLandPage() {
       if (viewMode === 'guided') setActiveStep(3);
       return;
     }
-    const parsedPrice = forSale ? Number(priceNgn) : 0;
-    if (forSale && (!parsedPrice || parsedPrice <= 0)) {
-      setError('Please enter an asking price in Naira (NGN), or switch off "List this land for sale".');
+    const parsedPriceUsd = forSale ? parseUsdInput(priceUsdInput) : 0;
+    if (forSale && (!parsedPriceUsd || parsedPriceUsd <= 0)) {
+      setError('Please enter an asking price in USD ($), or switch off "List this land for sale".');
       if (viewMode === 'guided') setActiveStep(3);
       return;
     }
 
     setSubmitting(true);
+
+    let resolvedMapImageUrl = gisMapImageUrl;
+    if (
+      !resolvedMapImageUrl &&
+      (gisPolygon.length >= 3 || (gisLat !== undefined && gisLng !== undefined))
+    ) {
+      try {
+        resolvedMapImageUrl = await captureParcelMapSnapshot({
+          polygon: gisPolygon,
+          center:
+            gisLat !== undefined && gisLng !== undefined
+              ? { lat: gisLat, lng: gisLng }
+              : null,
+          layerId: gisLayerId,
+        });
+      } catch {
+        resolvedMapImageUrl = null;
+      }
+    }
 
     const created = addLandListing({
       title: title.trim(),
@@ -395,7 +435,8 @@ export default function RegisterLandPage() {
       category,
       documentType,
       documentNumber: documentNumber.trim() || 'Pending Reference',
-      priceNgn: parsedPrice,
+      priceUsd: parsedPriceUsd,
+      priceNgn: parsedPriceUsd * NGN_PER_USD,
       forSale,
       saleStatus: forSale ? 'available' : 'not_for_sale',
       approvalStatus: 'pending_review',
@@ -407,6 +448,7 @@ export default function RegisterLandPage() {
       lng: gisLng,
       polygon: gisPolygon.length >= 3 ? gisPolygon : undefined,
       perimeterMeters: gisPerimeterMeters,
+      imageUrl: resolvedMapImageUrl || undefined,
       documents,
     });
 
@@ -425,12 +467,13 @@ export default function RegisterLandPage() {
     setDocumentNumber('');
     setCoordinates('');
     setDescription('');
-    setPriceNgn('');
+    setPriceUsdInput('');
     setDocuments([]);
     setGisLat(undefined);
     setGisLng(undefined);
     setGisPolygon([]);
     setGisPerimeterMeters(undefined);
+    setGisMapImageUrl(null);
     setGisResetSignal((prev) => prev + 1);
     setError(null);
   };
@@ -441,7 +484,7 @@ export default function RegisterLandPage() {
     title.trim() &&
       location.trim() &&
       Number(areaSqm) > 0 &&
-      (!forSale || Number(priceNgn) > 0),
+      (!forSale || parseUsdInput(priceUsdInput) > 0),
   );
   const step4Complete = documents.length > 0;
 
@@ -455,7 +498,7 @@ export default function RegisterLandPage() {
   const numericArea = Number(areaSqm);
   const areaEquivalents =
     numericArea > 0 ? formatPlotEquivalents(numericArea) : null;
-  const numericPrice = Number(priceNgn);
+  const numericPriceUsd = parseUsdInput(priceUsdInput);
 
   return (
     <div className="min-h-screen bg-[#020305] text-[#F4F7FB] flex flex-col">
@@ -536,10 +579,52 @@ export default function RegisterLandPage() {
                 has been submitted to the registry.
               </p>
 
-              <div className="my-6 flex flex-col items-center gap-2">
+              <div className="my-6 flex flex-col items-center gap-3">
+                {registeredLand.imageUrl && (
+                  <div className="w-full max-w-sm overflow-hidden rounded-[10px] border border-[rgba(91,133,167,0.28)] bg-[#05080D]">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={registeredLand.imageUrl}
+                      alt={registeredLand.title}
+                      className="aspect-[4/3] w-full object-cover"
+                    />
+                    <div className="px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs border-t border-[rgba(91,133,167,0.18)]">
+                      <span className="text-[#94A3B8] truncate">
+                        {registeredLand.location}, {registeredLand.state}
+                      </span>
+                      <div className="text-right shrink-0">
+                        {(() => {
+                          const usd = getListingPriceUsd(registeredLand);
+                          return registeredLand.forSale && usd > 0 ? (
+                            <>
+                              <p className="font-mono font-bold text-emerald-400 tabular-nums">
+                                {formatUsd(usd)}
+                              </p>
+                              <p className="font-mono text-[11px] text-[#38BDF8] tabular-nums">
+                                {formatEthFromUsd(usd)}
+                              </p>
+                            </>
+                          ) : (
+                            <span className="font-mono text-[#94A3B8]">Registry Only</span>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="inline-block rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] px-4 py-2 font-mono text-xs text-[#38BDF8]">
                   Parcel Reference: {registeredLand.parcelRef}
                 </div>
+                {registeredLand.forSale && getListingPriceUsd(registeredLand) > 0 && (
+                  <div className="inline-flex flex-wrap items-center justify-center gap-2 rounded-lg bg-[#05080D] border border-emerald-500/35 px-4 py-1.5 font-mono text-sm font-bold text-emerald-400 tabular-nums">
+                    <span>Asking Price: {formatUsd(getListingPriceUsd(registeredLand))}</span>
+                    <span className="text-[#475569]">·</span>
+                    <span className="text-[#38BDF8]">
+                      {formatEthFromUsd(getListingPriceUsd(registeredLand))}
+                    </span>
+                  </div>
+                )}
                 {registeredLand.ownerWalletAddress && (
                   <div className="inline-block rounded-lg bg-[#05080D] border border-emerald-500/30 px-4 py-1.5 font-mono text-xs text-emerald-400">
                     ETH Wallet Linked: {registeredLand.ownerWalletAddress}
@@ -1000,23 +1085,30 @@ export default function RegisterLandPage() {
 
                     {forSale && (
                       <div>
-                        <label htmlFor="priceNgn" className="block text-xs text-[#94A3B8] mb-1.5">
-                          Asking Price (₦ Naira) *
+                        <label htmlFor="priceUsd" className="block text-xs text-[#94A3B8] mb-1.5">
+                          Asking Price ($ USD) *
                         </label>
                         <input
-                          id="priceNgn"
-                          type="number"
-                          min="1"
+                          id="priceUsd"
+                          type="text"
+                          inputMode="decimal"
                           required
-                          value={priceNgn}
-                          onChange={(e) => setPriceNgn(e.target.value)}
-                          placeholder="e.g. 45000000"
+                          value={priceUsdInput}
+                          onChange={(e) => setPriceUsdInput(e.target.value)}
+                          placeholder="e.g. 50,000"
                           className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono tabular-nums text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                         />
-                        {numericPrice > 0 && (
-                          <p className="mt-1 text-xs font-mono text-emerald-400 tabular-nums">
-                            Listed price: {formatNaira(numericPrice)}
-                          </p>
+                        {numericPriceUsd > 0 && (
+                          <div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 text-xs font-mono text-emerald-300 tabular-nums">
+                            <span>Display Amount:</span>
+                            <strong className="text-sm text-emerald-400">
+                              {formatUsd(numericPriceUsd)}
+                            </strong>
+                            <span className="text-[#475569]">·</span>
+                            <strong className="text-sm text-[#38BDF8]">
+                              {formatEthFromUsd(numericPriceUsd)}
+                            </strong>
+                          </div>
                         )}
                       </div>
                     )}
@@ -1175,13 +1267,45 @@ export default function RegisterLandPage() {
                         </p>
                       </div>
                       <div>
-                        <p className="text-[#64748B]">Listing &amp; Files</p>
-                        <p className="font-mono font-medium text-[#F4F7FB] mt-0.5 tabular-nums">
-                          {forSale && numericPrice > 0 ? formatNaira(numericPrice) : 'Registry only'} ·{' '}
-                          {documents.length} {documents.length === 1 ? 'file' : 'files'}
+                        <p className="text-[#64748B]">Asking Price &amp; Files</p>
+                        {forSale && numericPriceUsd > 0 ? (
+                          <div className="mt-0.5 font-mono tabular-nums">
+                            <p className="font-semibold text-emerald-400">
+                              {formatUsd(numericPriceUsd)}
+                            </p>
+                            <p className="text-[11px] text-[#38BDF8]">
+                              ≈ {formatEthFromUsd(numericPriceUsd)}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="font-mono font-semibold text-emerald-400 mt-0.5">
+                            Registry only
+                          </p>
+                        )}
+                        <p className="text-[11px] text-[#64748B]">
+                          {documents.length} {documents.length === 1 ? 'file' : 'files'} attached
                         </p>
                       </div>
                     </div>
+
+                    {gisMapImageUrl && (
+                      <div className="flex items-center gap-3 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-2.5">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={gisMapImageUrl}
+                          alt="Captured map preview"
+                          className="h-14 w-[75px] rounded object-cover border border-[#38BDF8]/40 shrink-0"
+                        />
+                        <div className="text-xs min-w-0">
+                          <p className="font-medium text-[#F4F7FB]">
+                            Captured OpenMap Picture Attached
+                          </p>
+                          <p className="text-[11px] text-[#64748B]">
+                            This map snapshot will display as the land photo on Explore Land.
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-2 flex flex-wrap items-center justify-between gap-3">

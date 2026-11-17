@@ -15,7 +15,12 @@ import {
   createOpenMapTileLayer,
   type OpenMapLayerId,
 } from '@/lib/openmap-tiles';
-import { formatNaira, type LandListing } from '@/lib/land-store';
+import {
+  formatEthFromUsd,
+  formatUsd,
+  getListingPriceUsd,
+  type LandListing,
+} from '@/lib/land-store';
 
 interface MappableParcelItem {
   parcel: LandListing;
@@ -132,7 +137,10 @@ function ExploreParcelsMapCanvasInline({
         poly.addTo(overlay);
       }
 
-      const priceText = isSold ? 'SOLD' : formatNaira(parcel.priceNgn);
+      const parcelUsd = getListingPriceUsd(parcel);
+      const priceText = isSold
+        ? 'SOLD'
+        : `${formatUsd(parcelUsd)} · ${formatEthFromUsd(parcelUsd, 2)}`;
       const badgeBg = isSold
         ? 'background:#1E293B;color:#FDA4AF;border:1px solid rgba(244,63,94,0.55);'
         : isActive
@@ -289,9 +297,16 @@ export function ExploreParcelsMap({ parcels, onInspect, onBuy }: ExploreParcelsM
                 <Maximize2 className="h-3.5 w-3.5 text-[#38BDF8]" />
                 {activeParcel.areaSqm.toLocaleString()} sqm
               </span>
-              <span className="font-mono font-bold text-[#F4F7FB] text-sm">
-                {formatNaira(activeParcel.priceNgn)}
-              </span>
+              <div className="text-right font-mono tabular-nums">
+                <p className="font-bold text-[#F4F7FB] text-sm">
+                  {formatUsd(getListingPriceUsd(activeParcel))}
+                </p>
+                {getListingPriceUsd(activeParcel) > 0 && (
+                  <p className="text-[11px] text-[#38BDF8]">
+                    ≈ {formatEthFromUsd(getListingPriceUsd(activeParcel))}
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-2 pt-0.5">
