@@ -21,8 +21,11 @@ export default function GISMap({
   existingBoundary = []
 }: GISMapProps) {
   const mapRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+  const polygonRef = useRef<any>(null);
   const [points, setPoints] = useState<LatLngPoint[]>(existingBoundary);
   const [mounted, setMounted] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     setMounted(true);
@@ -30,39 +33,84 @@ export default function GISMap({
     // Only run on client side
     if (typeof window === 'undefined') return;
 
+    let map: any = null;
+    let L: any = null;
+
     // Load Leaflet dynamically
-    import('leaflet').then((L) => {
-      if (!mapRef.current) {
-        // Create map
-        const map = L.map('map-container').setView(center, zoom);
+    const initMap = async () => {
+      try {
+        setIsLoading(true);
         
-        // Add OpenStreetMap tiles
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '© OpenStreetMap contributors',
-          maxZoom: 19
-        }).addTo(map);
-
-        mapRef.current = map;
-
-        // Add click handler
-        map.on('click', (e: any) => {
-          const newPoint = { lat: e.latlng.lat, lng: e.latlng.lng };
-          const newPoints = [...points, newPoint];
-          setPoints(newPoints);
-          
-          // Add marker
-          L.marker([e.latlng.lat, e.latlng.lng]).addTo(map);
+        // Import Leaflet
+        const leaflet = await import('leaflet');
+        L = leaflet.default;
+        
+        // Fix icon paths for Leaflet
+        delete (L.Icon.Default.prototype as any)._getIconUrl;
+        L.Icon.Default.mergeOptions({
+          iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+          iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+          shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
         });
+
+        // Wait for container to be ready
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        if (!mapRef.current && document.getElementById('map-container')) {
+          // Create map
+          map = L.map('map-container').setView(center, zoom);
+          
+          // Add OpenStreetMap tiles
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+          }).addTo(map);
+
+          mapRef.current = map;
+
+          // Add click handler for drawing boundaries
+          map.on('click', (e: any) => {
+            if (!L) return;
+            
+            const newPoint = { lat: e.latlng.lat, lng: e.latlng.lng };
+            const newPoints = [...points, newPoint];
+            setPoints(newPoints);
+            
+            // Add marker
+            const marker = L.marker([e.latlng.lat, e.latlng.lng]).addTo(map);
+            markersRef.current.push(marker);
+            
+            // Update polygon
+            if (newPoints.length >= 3) {
+              if (polygonRef.current) {
+                map.removeLayer(polygonRef.current);
+              }
+              polygonRef.current = L.polygon(
+                newPoints.map(p => [p.lat, p.lng]),
+                { color: '#38BDF8', fillColor: '#38BDF8', fillOpacity: 0.2 }
+              ).addTo(map);
+            }
+          });
+
+          setIsLoading(false);
+        }
+      } catch (error) {
+        console.error('Error initializing map:', error);
+        setIsLoading(false);
       }
-    });
+    };
+
+    initMap();
 
     return () => {
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
+      markersRef.current = [];
+      polygonRef.current = null;
     };
-  }, []);
+  }, [center, zoom]);
 
   const handleSave = () => {
     if (points.length >= 3 && onBoundaryDraw) {
@@ -72,52 +120,56 @@ export default function GISMap({
 
   const handleClear = () => {
     setPoints([]);
-    if (mapRef.current) {
-      mapRef.current.eachLayer((layer: any) => {
-        if (layer._latlng) { // It's a marker
-          mapRef.current.removeLayer(layer);
-        }
-      });
+    
+    // Clear all markers
+    markersRef.current.forEach(marker => {
+      if (mapRef.current) {
+        mapRef.current.removeLayer(marker);
+      }
+    });
+    markersRef.current = [];
+    
+    // Clear polygon
+    if (polygonRef.current && mapRef.current) {
+      mapRef.current.removeLayer(polygonRef.current);
+      polygonRef.current = null;
     }
   };
 
-  if (!mounted) {
+  if (!mounted || isLoading) {
     return (
-      <div className="w-full h-[600px] bg-gray-100 rounded-lg flex items-center justify-center">
-        <p className="text-gray-600">Loading map...</p>
+      <div className="w-full h-[600px] bg-gray-900 rounded-lg flex items-center justify-center border-2 border-gray-700">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
+          <p className="text-gray-400">Loading OpenStreetMap...</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="relative">
-      <link 
-        rel="stylesheet" 
-        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-        crossOrigin=""
-      />
-      <div id="map-container" className="w-full h-[600px] rounded-lg border-2 border-gray-300 z-0"></div>
+      <div id="map-container" className="w-full h-[600px] rounded-lg border-2 border-gray-700 z-0"></div>
       
-      <div className="absolute top-4 right-4 z-[1000] bg-white rounded-lg shadow-lg p-3 space-y-2">
+      <div className="absolute top-4 right-4 z-[1000] bg-gray-900 border border-gray-700 rounded-lg shadow-lg p-3 space-y-2">
         <button
           onClick={handleSave}
           disabled={points.length < 3}
-          className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+          className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          Save ({points.length} points)
+          Save Boundary ({points.length} points)
         </button>
         <button
           onClick={handleClear}
-          className="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+          className="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
         >
-          Clear
+          Clear All
         </button>
       </div>
       
-      <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-        <p className="text-sm text-blue-900">
-          <strong>🗺️ OpenStreetMap</strong> - Click on map to add boundary points. Need at least 3 points.
+      <div className="mt-4 p-4 bg-blue-950 border border-blue-800 rounded-lg">
+        <p className="text-sm text-blue-200">
+          <strong>🗺️ OpenStreetMap Interactive Tool</strong> - Click on the map to add boundary points. You need at least 3 points to define a land parcel boundary.
         </p>
       </div>
     </div>
