@@ -1,5 +1,7 @@
-﻿.next
+﻿# Ignore build artifacts
+.next
 .next-dev
-node_modules
-.env.local
-.DS_Store
+node_modules/.cache
+
+# Force rebuild
+*Canvas*

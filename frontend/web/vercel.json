@@ -2,5 +2,8 @@
   "version": 2,
   "buildCommand": "npm run build:vercel",
   "framework": "nextjs",
-  "installCommand": "npm install --legacy-peer-deps"
+  "installCommand": "npm install --legacy-peer-deps",
+  "env": {
+    "NEXT_IGNORE_INCORRECT_LOCKFILE": "1"
+  }
 }
