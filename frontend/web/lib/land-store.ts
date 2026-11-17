@@ -1,4 +1,4 @@
-export type LandCategory =
+﻿export type LandCategory =
   | 'Residential'
   | 'Commercial'
   | 'Agricultural'
@@ -27,6 +27,7 @@ export interface LandListing {
   ownerName: string;
   ownerEmail: string;
   ownerPhone: string;
+  ownerWalletAddress?: string;
   state: string;
   location: string;
   areaSqm: number;
@@ -48,6 +49,13 @@ export interface LandListing {
   createdAt: string;
 }
 
+export type PurchasePaymentMethod =
+  | 'Web3 Wallet Signature (EIP-191)'
+  | 'Web3 Wallet On-Chain Escrow'
+  | 'Bank Escrow Transfer'
+  | 'Mortgage Financing'
+  | 'Direct Institutional Settlement';
+
 export interface LandPurchaseOrder {
   id: string;
   landId: string;
@@ -57,7 +65,12 @@ export interface LandPurchaseOrder {
   buyerName: string;
   buyerEmail: string;
   buyerPhone: string;
-  paymentMethod: 'Bank Escrow Transfer' | 'Mortgage Financing' | 'Direct Institutional Settlement';
+  paymentMethod: PurchasePaymentMethod;
+  walletAddress?: string;
+  walletName?: string;
+  walletChainName?: string;
+  walletSignature?: string;
+  walletTxHash?: string;
   notes: string;
   status: 'pending_settlement' | 'completed';
   createdAt: string;
@@ -94,7 +107,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     approvalStatus: 'approved',
     description:
       'Cleared, beaconed waterfront residential parcel with paved dual-access frontage, perimeter drainage, and unobstructed lagoon view. Ready for immediate luxury residential development.',
-    coordinates: '6.4382° N, 3.4721° E',
+    coordinates: '6.4382Â° N, 3.4721Â° E',
     imageUrl: '/assets/lands/lekki_waterfront.jpg',
     documents: [
       {
@@ -133,7 +146,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     approvalStatus: 'approved',
     description:
       'Elevated manicured estate plot inside a fully serviced diplomatic corridor with asphalt boulevard frontage, underground power ducting, and verified AGIS cadastral boundaries.',
-    coordinates: '9.0820° N, 7.4983° E',
+    coordinates: '9.0820Â° N, 7.4983Â° E',
     imageUrl: '/assets/lands/abuja_maitama.jpg',
     documents: [
       {
@@ -165,7 +178,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     approvalStatus: 'approved',
     description:
       'High-visibility corner commercial site fenced with twin vehicular gates, surrounded by dual-carriageway avenues. Ideal for corporate headquarters, retail complex, or medical center.',
-    coordinates: '6.6018° N, 3.3515° E',
+    coordinates: '6.6018Â° N, 3.3515Â° E',
     imageUrl: '/assets/lands/ikeja_commercial.jpg',
     documents: [
       {
@@ -197,7 +210,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     approvalStatus: 'approved',
     description:
       'Six contiguous acres of fertile arable farmland with graded all-season access road, natural watershed border, and registered Ogun State survey plan.',
-    coordinates: '6.8485° N, 3.6463° E',
+    coordinates: '6.8485Â° N, 3.6463Â° E',
     imageUrl: '/assets/lands/ogun_agricultural.jpg',
     documents: [
       {
@@ -229,7 +242,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     approvalStatus: 'approved',
     description:
       'Premier gated lagoon-front residential plot featuring compacted sand-filled elevation, shoreline sheet-piling, and verified digital deed history.',
-    coordinates: '6.4648° N, 3.4552° E',
+    coordinates: '6.4648Â° N, 3.4552Â° E',
     imageUrl: '/assets/lands/lekki_waterfront.jpg',
     documents: [
       {
@@ -261,7 +274,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     approvalStatus: 'approved',
     description:
       'Level commercial land parcel positioned along a bustling arterial avenue with complete utility connections and clean FCDA building clearance.',
-    coordinates: '9.0765° N, 7.4792° E',
+    coordinates: '9.0765Â° N, 7.4792Â° E',
     imageUrl: '/assets/lands/ikeja_commercial.jpg',
     documents: [
       {
@@ -293,7 +306,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     approvalStatus: 'approved',
     description:
       'Dry, fenced residential twin-plot inside a serene paved neighborhood with verified Rivers State Ministry of Lands title registration.',
-    coordinates: '4.8242° N, 7.0014° E',
+    coordinates: '4.8242Â° N, 7.0014Â° E',
     imageUrl: '/assets/lands/abuja_maitama.jpg',
     documents: [
       {
@@ -325,7 +338,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     approvalStatus: 'approved',
     description:
       'Expansive industrial and agro-processing parcel adjacent to the rail freight terminal corridor, surveyed with clean boundary beacons.',
-    coordinates: '7.5245° N, 3.9112° E',
+    coordinates: '7.5245Â° N, 3.9112Â° E',
     lat: 7.5245,
     lng: 3.9112,
     polygon: createRectangleAroundPoint({ lat: 7.5245, lng: 3.9112 }, 120, 100),

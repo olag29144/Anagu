@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useState, FormEvent } from 'react';
 import {
@@ -267,7 +267,7 @@ export default function StandaloneAdminPage() {
                   type="password"
                   value={passcode}
                   onChange={(e) => setPasscode(e.target.value)}
-                  placeholder="••••••••"
+                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                   className="w-full h-11 pl-10 pr-3 rounded-lg bg-[#070B12] border border-slate-700 text-sm text-white placeholder-slate-500 focus:border-indigo-400 focus:outline-none"
                 />
               </div>
@@ -453,7 +453,7 @@ export default function StandaloneAdminPage() {
                     <div>
                       <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
                         <span className="text-indigo-400">{parcel.parcelRef}</span>
-                        <span className="text-slate-600">·</span>
+                        <span className="text-slate-600">Â·</span>
                         <span
                           className={
                             parcel.approvalStatus === 'approved'
@@ -469,7 +469,7 @@ export default function StandaloneAdminPage() {
                             ? 'Rejected'
                             : 'Pending Review'}
                         </span>
-                        <span className="text-slate-600">·</span>
+                        <span className="text-slate-600">Â·</span>
                         <span className="text-slate-400">
                           {parcel.forSale
                             ? parcel.saleStatus === 'sold'
@@ -482,11 +482,16 @@ export default function StandaloneAdminPage() {
                         {parcel.title}
                       </h3>
                       <p className="text-xs text-slate-400 mt-0.5">
-                        {parcel.location}, {parcel.state} · {parcel.areaSqm.toLocaleString()} sqm ·{' '}
+                        {parcel.location}, {parcel.state} Â· {parcel.areaSqm.toLocaleString()} sqm Â·{' '}
                         {parcel.documentType} ({parcel.documentNumber})
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
-                        Owner: <span className="text-slate-300">{parcel.ownerName}</span> ({parcel.ownerEmail} · {parcel.ownerPhone})
+                        Owner: <span className="text-slate-300">{parcel.ownerName}</span> ({parcel.ownerEmail} Â· {parcel.ownerPhone})
+                        {parcel.ownerWalletAddress && (
+                          <span className="ml-2 font-mono text-indigo-300">
+                            Â· ETH: {parcel.ownerWalletAddress.slice(0, 6)}â€¦{parcel.ownerWalletAddress.slice(-4)}
+                          </span>
+                        )}
                       </p>
                     </div>
 
@@ -663,7 +668,7 @@ export default function StandaloneAdminPage() {
                         <td className="px-5 py-4 font-mono text-indigo-400">{order.id}</td>
                         <td className="px-5 py-4">
                           <p className="font-semibold text-white">{order.buyerName}</p>
-                          <p className="text-slate-400">{order.buyerEmail} · {order.buyerPhone}</p>
+                          <p className="text-slate-400">{order.buyerEmail} Â· {order.buyerPhone}</p>
                         </td>
                         <td className="px-5 py-4">
                           <p className="text-white">{order.landTitle}</p>
@@ -674,6 +679,12 @@ export default function StandaloneAdminPage() {
                         </td>
                         <td className="px-5 py-4">
                           <p className="text-slate-300">{order.paymentMethod}</p>
+                          {order.walletAddress && (
+                            <p className="font-mono text-[11px] text-indigo-300 mt-0.5">
+                              {order.walletName ? `${order.walletName}: ` : ''}
+                              {order.walletAddress.slice(0, 6)}â€¦{order.walletAddress.slice(-4)}
+                            </p>
+                          )}
                           <p
                             className={`font-mono mt-0.5 ${
                               order.status === 'completed' ? 'text-emerald-400' : 'text-amber-400'
@@ -717,7 +728,7 @@ export default function StandaloneAdminPage() {
               <div>
                 <h3 className="text-sm font-semibold text-white">{previewDoc.name}</h3>
                 <p className="text-xs font-mono text-slate-400">
-                  {previewDoc.type} · {formatFileSize(previewDoc.size)}
+                  {previewDoc.type} Â· {formatFileSize(previewDoc.size)}
                 </p>
               </div>
               <button

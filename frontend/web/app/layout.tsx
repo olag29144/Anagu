@@ -1,7 +1,6 @@
 ﻿import type { Metadata } from 'next';
 import './globals.css';
 import { MapsContextProvider } from '@/components/gis/MapsContextProvider';
-import Script from 'next/script';
 
 export const metadata: Metadata = {
   title: 'Anagu Land Administration',

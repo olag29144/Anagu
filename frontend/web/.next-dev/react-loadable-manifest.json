@@ -1,1 +1,23 @@
-{}
+{
+  "components/gis/ExploreParcelsMap.tsx -> ./ExploreParcelsMapCanvas": {
+    "id": "components/gis/ExploreParcelsMap.tsx -> ./ExploreParcelsMapCanvas",
+    "files": [
+      "static/css/_app-pages-browser_components_gis_ExploreParcelsMapCanvas_tsx.css",
+      "static/chunks/_app-pages-browser_components_gis_ExploreParcelsMapCanvas_tsx.js"
+    ]
+  },
+  "components/gis/LandGisMapper.tsx -> ./OpenMapGisCanvas": {
+    "id": "components/gis/LandGisMapper.tsx -> ./OpenMapGisCanvas",
+    "files": [
+      "static/css/_app-pages-browser_components_gis_OpenMapGisCanvas_tsx.css",
+      "static/chunks/_app-pages-browser_components_gis_OpenMapGisCanvas_tsx.js"
+    ]
+  },
+  "components/gis/ParcelMiniMap.tsx -> ./ParcelMiniMapCanvas": {
+    "id": "components/gis/ParcelMiniMap.tsx -> ./ParcelMiniMapCanvas",
+    "files": [
+      "static/css/_app-pages-browser_components_gis_ParcelMiniMapCanvas_tsx.css",
+      "static/chunks/_app-pages-browser_components_gis_ParcelMiniMapCanvas_tsx.js"
+    ]
+  }
+}
