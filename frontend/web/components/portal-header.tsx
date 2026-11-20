@@ -57,8 +57,6 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
         return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
       case 'registrar':
         return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
-      case 'land_admin':
-        return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
       case 'governor':
         return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
       case 'surveyor':
@@ -133,7 +131,7 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
                   }`}
                   title={`${acc.title} (${acc.email})`}
                 >
-                  {acc.role === 'land_admin' ? 'Admin' : acc.role.charAt(0).toUpperCase() + acc.role.slice(1)}
+                  {acc.role.charAt(0).toUpperCase() + acc.role.slice(1)}
                 </button>
               );
             })}

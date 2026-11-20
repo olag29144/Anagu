@@ -2,7 +2,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
 export interface DemoAccount {
   email: string;
-  role: 'citizen' | 'surveyor' | 'registrar' | 'land_admin' | 'governor';
+  role: 'citizen' | 'surveyor' | 'registrar' | 'governor';
   name: string;
   title: string;
   department: string;
@@ -28,15 +28,6 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     department: 'Ministry of Lands Bureau',
     description: 'Adjudicate title applications, inspect PostGIS hashes, and issue ERC-721 deeds.',
     defaultPath: '/registrar',
-  },
-  {
-    email: 'admin@anagu.gov.ng',
-    role: 'land_admin',
-    name: 'Dr. Ibrahim Danladi',
-    title: 'Land Administrator',
-    department: 'State Directorate of Land Services',
-    description: 'Overview of all cadastral applications, issued NFT titles, and legal audits.',
-    defaultPath: '/admin',
   },
   {
     email: 'governor@anagu.gov.ng',

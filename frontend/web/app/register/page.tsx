@@ -20,6 +20,11 @@ import {
   type LandListing,
 } from '@/lib/land-store';
 import {
+  getActiveUserAccount,
+  ensureUserAccountForRegistration,
+  updateUserProfile,
+} from '@/lib/user-store';
+import {
   captureParcelMapSnapshot,
   formatPlotEquivalents,
   type LatLngPoint,
@@ -29,6 +34,10 @@ import {
   subscribeWalletDiscovery,
   getSnapshotDetectedWallets,
   connectWalletProvider,
+  getMobileWalletDeepLinksForPath,
+  triggerDeviceEthereumWalletIntent,
+  isMobileDevice,
+  isAndroidDevice,
   mapWalletError,
   type DetectedWalletProvider,
 } from '@/lib/web3-wallet';
@@ -39,12 +48,14 @@ import {
   Check,
   CheckCircle2,
   Compass,
+  ExternalLink,
   FileText,
   Image as ImageIcon,
   Layers,
   ListChecks,
   Loader2,
   MapPin,
+  Smartphone,
   Trash2,
   Upload,
   User,
@@ -151,6 +162,7 @@ export default function RegisterLandPage() {
   const [ownerWalletAddress, setOwnerWalletAddress] = useState('');
   const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
   const [connectingWallet, setConnectingWallet] = useState(false);
+  const [showMobileWalletLinks, setShowMobileWalletLinks] = useState(false);
 
   // Land Details
   const [title, setTitle] = useState('');
@@ -185,8 +197,24 @@ export default function RegisterLandPage() {
   const [error, setError] = useState<string | null>(null);
   const [registeredLand, setRegisteredLand] = useState<LandListing | null>(null);
 
+  const [activeUser, setActiveUser] = useState<ReturnType<typeof getActiveUserAccount>>(null);
+
   useEffect(() => {
     setExistingParcels(getLandListings());
+    const current = getActiveUserAccount();
+    setActiveUser(current);
+    if (current) {
+      setOwnerName((prev) => prev || current.fullName);
+      if (current.phone && current.phone !== 'Not provided') {
+        setOwnerPhone((prev) => prev || current.phone);
+      }
+      if (current.email && current.email !== 'Not provided') {
+        setOwnerEmail((prev) => prev || current.email);
+      }
+      if (current.walletAddress) {
+        setOwnerWalletAddress((prev) => prev || current.walletAddress || '');
+      }
+    }
     const unsubscribe = subscribeWalletDiscovery((wallets) => {
       setDetectedWallets(wallets);
     });
@@ -292,8 +320,12 @@ export default function RegisterLandPage() {
     const wallets =
       detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
     if (wallets.length === 0) {
+      if (isMobileDevice() && isAndroidDevice()) {
+        triggerDeviceEthereumWalletIntent();
+      }
+      setShowMobileWalletLinks(true);
       setError(
-        'No browser Web3 wallet detected. Paste your 0x... Ethereum wallet address manually or open this page in your wallet browser.',
+        'No browser Web3 wallet extension detected. Open a mobile wallet below, unlock your browser extension, or paste your 0x... wallet address.',
       );
       return;
     }
@@ -302,6 +334,11 @@ export default function RegisterLandPage() {
     try {
       const connected = await connectWalletProvider(wallets[0]);
       setOwnerWalletAddress(connected.address);
+      setShowMobileWalletLinks(false);
+      const current = getActiveUserAccount();
+      if (current) {
+        updateUserProfile(current.id, { walletAddress: connected.address });
+      }
     } catch (err) {
       setError(mapWalletError(err));
     } finally {
@@ -423,7 +460,22 @@ export default function RegisterLandPage() {
       }
     }
 
+    const activeAccount = getActiveUserAccount();
+    if (activeAccount && activeAccount.status === 'suspended') {
+      setError('Your user account is currently suspended and cannot submit new lands.');
+      setSubmitting(false);
+      return;
+    }
+
+    const userAccount = ensureUserAccountForRegistration({
+      fullName: ownerName.trim(),
+      phone: ownerPhone.trim(),
+      email: ownerEmail.trim(),
+      walletAddress: ownerWalletAddress.trim() || undefined,
+    });
+
     const created = addLandListing({
+      userId: userAccount.id,
       title: title.trim(),
       ownerName: ownerName.trim(),
       ownerEmail: ownerEmail.trim() || 'Not provided',
@@ -508,19 +560,21 @@ export default function RegisterLandPage() {
         <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
           <div className="mb-6 flex items-center justify-between">
             <Link
-              href="/"
+              href={activeUser ? '/dashboard' : '/'}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-[#94A3B8] hover:text-[#67E8F9] transition-colors whitespace-nowrap"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
-              <span>Back to Home</span>
+              <span>{activeUser ? 'Back to My Dashboard' : 'Back to Home'}</span>
             </Link>
-            <Link
-              href="/explore"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-[#38BDF8] hover:text-[#67E8F9] transition-colors whitespace-nowrap"
-            >
-              <span>Explore Land for Sale</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
+            {!activeUser && (
+              <Link
+                href="/explore"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-[#38BDF8] hover:text-[#67E8F9] transition-colors whitespace-nowrap"
+              >
+                <span>Explore Land for Sale</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            )}
           </div>
 
           <div className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -633,19 +687,25 @@ export default function RegisterLandPage() {
               </div>
 
               <div className="flex flex-wrap items-center justify-center gap-3">
+                <Link
+                  href="/dashboard"
+                  className="inline-flex items-center gap-2 h-11 px-5 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] transition-colors whitespace-nowrap"
+                >
+                  <span>Monitor in My Dashboard</span>
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
                 {registeredLand.forSale && (
                   <Link
                     href="/explore"
-                    className="inline-flex items-center gap-2 h-11 px-5 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] transition-colors whitespace-nowrap"
+                    className="inline-flex items-center gap-2 h-11 px-5 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.35)] text-sm font-medium text-[#F4F7FB] hover:border-[#38BDF8] transition-colors whitespace-nowrap"
                   >
                     <span>View on Explore Land</span>
-                    <ArrowRight className="h-4 w-4" />
                   </Link>
                 )}
                 <button
                   type="button"
                   onClick={handleReset}
-                  className="inline-flex items-center gap-2 h-11 px-5 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.25)] text-sm font-medium text-[#F4F7FB] hover:border-[#38BDF8] whitespace-nowrap"
+                  className="inline-flex items-center gap-2 h-11 px-5 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.25)] text-sm font-medium text-[#94A3B8] hover:text-[#F4F7FB] hover:border-[#38BDF8] whitespace-nowrap"
                 >
                   Register Another Land
                 </button>
@@ -781,7 +841,7 @@ export default function RegisterLandPage() {
                         type="button"
                         disabled={connectingWallet}
                         onClick={() => void handleAutoFillWallet()}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#38BDF8]/10 border border-[#38BDF8]/35 text-[11px] font-medium text-[#67E8F9] hover:bg-[#38BDF8]/20 disabled:opacity-60 transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#38BDF8] text-[#020305] text-[11px] font-semibold hover:bg-[#67E8F9] disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
                       >
                         {connectingWallet ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
@@ -789,7 +849,7 @@ export default function RegisterLandPage() {
                           <Wallet className="h-3 w-3" />
                         )}
                         <span>
-                          {connectingWallet ? 'Connecting Wallet…' : 'Connect Wallet to Auto-fill'}
+                          {connectingWallet ? 'Connecting Wallet…' : 'Connect Wallet'}
                         </span>
                       </button>
                     </div>
@@ -806,6 +866,35 @@ export default function RegisterLandPage() {
                       <p className="mt-1 text-[11px] font-mono text-emerald-400">
                         Valid Ethereum (ERC-721 / Web3) wallet address
                       </p>
+                    )}
+                    {showMobileWalletLinks && (
+                      <div className="mt-3 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[11px] font-mono uppercase tracking-wider text-[#94A3B8] inline-flex items-center gap-1.5">
+                            <Smartphone className="h-3.5 w-3.5 text-[#38BDF8]" />
+                            <span>Open in Mobile Wallet App</span>
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setShowMobileWalletLinks(false)}
+                            className="text-[11px] text-[#64748B] hover:text-[#F4F7FB]"
+                          >
+                            Hide
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {getMobileWalletDeepLinksForPath('/register').map((wallet) => (
+                            <a
+                              key={wallet.id}
+                              href={wallet.href}
+                              className={`px-2.5 py-2 rounded-lg bg-[#0A0F16] border text-xs font-medium flex items-center justify-between gap-1.5 transition-colors ${wallet.accentClass}`}
+                            >
+                              <span className="truncate">{wallet.name}</span>
+                              <ExternalLink className="h-3 w-3 shrink-0 opacity-80" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
 

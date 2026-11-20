@@ -22,6 +22,7 @@ import {
 
 export interface LandListing {
   id: string;
+  userId?: string;
   title: string;
   parcelRef: string;
   ownerName: string;
@@ -64,6 +65,7 @@ export interface LandPurchaseOrder {
   parcelRef: string;
   priceNgn: number;
   priceUsd?: number;
+  buyerUserId?: string;
   buyerName: string;
   buyerEmail: string;
   buyerPhone: string;
@@ -92,11 +94,13 @@ export const CATEGORY_DEFAULT_IMAGES: Record<LandCategory, string> = {
 export const INITIAL_LAND_LISTINGS: LandListing[] = [
   {
     id: 'LND-2026-101',
+    userId: 'USR-ADELEKE',
     title: 'Lekki Peninsula Waterfront Plot 14',
     parcelRef: 'NG-LAG-LEK-2026-0089',
     ownerName: 'Adeleke Holdings Ltd',
     ownerEmail: 'estates@adelekeholdings.ng',
     ownerPhone: '+234 803 412 8890',
+    ownerWalletAddress: '0x71C83812a19f20108A456789b910123456789012',
     state: 'Lagos State',
     location: 'Phase 1 Waterfront Corridor, Eti-Osa LGA, Lagos',
     areaSqm: 1240,
@@ -131,6 +135,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
   },
   {
     id: 'LND-2026-102',
+    userId: 'USR-BELLO',
     title: 'Maitama Diplomatic Ridge Estate Parcel',
     parcelRef: 'NG-ABJ-MAI-2026-0142',
     ownerName: 'Bello & Sons Capital',
@@ -163,6 +168,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
   },
   {
     id: 'LND-2026-103',
+    userId: 'USR-VANGUARD',
     title: 'Ikeja Central Business Corner Plot',
     parcelRef: 'NG-LAG-IKJ-2026-0318',
     ownerName: 'Vanguard Commercial Properties',
@@ -195,6 +201,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
   },
   {
     id: 'LND-2026-104',
+    userId: 'USR-OGUNAGRO',
     title: 'Sagamu Greenbelt Agricultural Acreage',
     parcelRef: 'NG-OGN-SAG-2026-0504',
     ownerName: 'Ogun Agro-Allied Ventures',
@@ -227,6 +234,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
   },
   {
     id: 'LND-2026-105',
+    userId: 'USR-CRESTLINE',
     title: 'Banana Island Crescent Residential Lot 7',
     parcelRef: 'NG-LAG-IKO-2026-0712',
     ownerName: 'Crestline Sovereign Estates',
@@ -259,6 +267,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
   },
   {
     id: 'LND-2026-106',
+    userId: 'USR-ABUJAURBAN',
     title: 'Wuse II Commercial Plaza Site',
     parcelRef: 'NG-ABJ-WUS-2026-0229',
     ownerName: 'Abuja Urban Developments',
@@ -291,6 +300,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
   },
   {
     id: 'LND-2026-107',
+    userId: 'USR-DELTAHORIZON',
     title: 'New GRA Port Harcourt Serviced Plot',
     parcelRef: 'NG-RIV-PHC-2026-0411',
     ownerName: 'Delta Horizon Realty',
@@ -304,7 +314,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
     documentNumber: 'RVSG/MLUD/2025/0411',
     priceNgn: 92000000,
     forSale: true,
-    saleStatus: 'available',
+    saleStatus: 'sold',
     approvalStatus: 'approved',
     description:
       'Dry, fenced residential twin-plot inside a serene paved neighborhood with verified Rivers State Ministry of Lands title registration.',
@@ -323,6 +333,7 @@ export const INITIAL_LAND_LISTINGS: LandListing[] = [
   },
   {
     id: 'LND-2026-108',
+    userId: 'USR-OYOCORRIDOR',
     title: 'Ibadan Moniya Agro-Logistics Hub Land',
     parcelRef: 'NG-OYO-IBD-2026-0615',
     ownerName: 'Oyo Inland Corridor Partners',
@@ -388,13 +399,35 @@ export const INITIAL_PURCHASE_ORDERS: LandPurchaseOrder[] = [
     landTitle: 'New GRA Port Harcourt Serviced Plot',
     parcelRef: 'NG-RIV-PHC-2026-0411',
     priceNgn: 92000000,
+    priceUsd: 57500,
+    buyerUserId: 'USR-OKAFOR',
     buyerName: 'Dr. Chinedu Okafor',
     buyerEmail: 'c.okafor@medconsult.ng',
     buyerPhone: '+234 806 551 0912',
     paymentMethod: 'Bank Escrow Transfer',
-    notes: 'Requesting deed verification packet prior to final escrow release.',
-    status: 'pending_settlement',
+    notes: 'Escrow payment verified and settled.',
+    status: 'completed',
     createdAt: '2026-11-12T15:20:00.000Z',
+  },
+  {
+    id: 'ORD-2026-302',
+    landId: 'LND-2026-104',
+    landTitle: 'Sagamu Greenbelt Agricultural Acreage',
+    parcelRef: 'NG-OGN-SAG-2026-0504',
+    priceNgn: 48000000,
+    priceUsd: 30000,
+    buyerUserId: 'USR-ADELEKE',
+    buyerName: 'Adeleke Holdings Ltd',
+    buyerEmail: 'estates@adelekeholdings.ng',
+    buyerPhone: '+234 803 412 8890',
+    paymentMethod: 'Web3 Wallet On-Chain Escrow',
+    walletAddress: '0x71C83812a19f20108A456789b910123456789012',
+    walletName: 'MetaMask',
+    walletChainName: 'Ethereum Mainnet',
+    walletTxHash: '0x4b92e1a0c7f3b84e90123a8b55d1c0947f81a204e673912ab3c4d5e6f7081920',
+    notes: 'On-chain escrow reservation awaiting final title transfer.',
+    status: 'pending_settlement',
+    createdAt: '2026-11-16T10:45:00.000Z',
   },
 ];
 
@@ -546,10 +579,11 @@ export function createPurchaseOrder(
   input: Omit<LandPurchaseOrder, 'id' | 'status' | 'createdAt'>,
 ): LandPurchaseOrder {
   const orders = getPurchaseOrders();
+  const isPaidOnChain = Boolean(input.walletTxHash);
   const order: LandPurchaseOrder = {
     ...input,
     id: `ORD-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 899)}`,
-    status: 'pending_settlement',
+    status: isPaidOnChain ? 'completed' : 'pending_settlement',
     createdAt: new Date().toISOString(),
   };
   savePurchaseOrders([order, ...orders]);

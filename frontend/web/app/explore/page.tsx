@@ -16,6 +16,15 @@ import {
   type PurchasePaymentMethod,
 } from '@/lib/land-store';
 import {
+  getActiveUserAccount,
+  ensureUserAccountForRegistration,
+  signInUser,
+  createUserAccount,
+  updateUserProfile,
+  type UserAccount,
+} from '@/lib/user-store';
+import { GoogleSignUpButton } from '@/components/auth/GoogleSignUpButton';
+import {
   subscribeWalletDiscovery,
   getSnapshotDetectedWallets,
   connectWalletProvider,
@@ -52,6 +61,8 @@ import {
   RefreshCw,
   Loader2,
   ShieldCheck,
+  User,
+  Lock,
 } from 'lucide-react';
 
 const CATEGORIES: Array<'All' | LandCategory> = [
@@ -92,6 +103,15 @@ export default function ExploreLandPage() {
   const [submittingPurchase, setSubmittingPurchase] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<LandPurchaseOrder | null>(null);
 
+  // User account state (required only when buying, browsing remains public)
+  const [activeUser, setActiveUser] = useState<UserAccount | null>(null);
+  const [buyAuthMode, setBuyAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [gateIdentifier, setGateIdentifier] = useState('');
+  const [gateName, setGateName] = useState('');
+  const [gatePhone, setGatePhone] = useState('');
+  const [gateEmail, setGateEmail] = useState('');
+  const [gateError, setGateError] = useState<string | null>(null);
+
   // Web3 Wallet state
   const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
   const [activeProvider, setActiveProvider] = useState<DetectedWalletProvider | null>(null);
@@ -101,6 +121,16 @@ export default function ExploreLandPage() {
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileLinks, setShowMobileLinks] = useState(false);
 
+  const prefillBuyerFromUser = (user: UserAccount) => {
+    setBuyerName((prev) => prev || user.fullName);
+    if (user.email && user.email !== 'Not provided') {
+      setBuyerEmail((prev) => prev || user.email);
+    }
+    if (user.phone && user.phone !== 'Not provided') {
+      setBuyerPhone((prev) => prev || user.phone);
+    }
+  };
+
   const connectWithWallet = async (wallet: DetectedWalletProvider) => {
     setWalletConnecting(true);
     setWalletError(null);
@@ -108,6 +138,11 @@ export default function ExploreLandPage() {
     try {
       const connected = await connectWalletProvider(wallet);
       setConnectedWallet(connected);
+      const current = getActiveUserAccount();
+      if (current) {
+        const updated = updateUserProfile(current.id, { walletAddress: connected.address });
+        if (updated) setActiveUser(updated);
+      }
       setPaymentMethod((prev) =>
         prev === 'Web3 Wallet On-Chain Escrow'
           ? 'Web3 Wallet On-Chain Escrow'
@@ -120,17 +155,52 @@ export default function ExploreLandPage() {
     }
   };
 
+  const triggerWalletDiscoveryAndConnect = () => {
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    const availableWallets =
+      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+
+    if (availableWallets.length > 0) {
+      setShowMobileLinks(false);
+      const targetWallet = activeProvider
+        ? availableWallets.find((w) => w.id === activeProvider.id) ?? availableWallets[0]
+        : availableWallets[0];
+      void connectWithWallet(targetWallet);
+      return;
+    }
+
+    const mobile = isMobileDevice();
+    setIsMobile(mobile);
+    setShowMobileLinks(mobile);
+
+    if (mobile && isAndroidDevice()) {
+      triggerDeviceEthereumWalletIntent();
+    }
+  };
+
   useEffect(() => {
     const initialListings = getLandListings();
     setListings(initialListings);
     setLoaded(true);
     setIsMobile(isMobileDevice());
 
+    const syncUser = () => {
+      const current = getActiveUserAccount();
+      setActiveUser(current);
+      if (current) {
+        prefillBuyerFromUser(current);
+      }
+    };
+
+    syncUser();
+    window.addEventListener('anagu-user-changed', syncUser);
+    window.addEventListener('storage', syncUser);
+
     const unsubscribe = subscribeWalletDiscovery((wallets) => {
       setDetectedWallets(wallets);
     });
 
-    // If opened from a mobile wallet deep link (?buyParcel=...), auto-open buy modal and trigger wallet
+    // If opened from a mobile wallet deep link (?buyParcel=...), auto-open buy modal
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const buyParcelId = params.get('buyParcel');
@@ -138,9 +208,12 @@ export default function ExploreLandPage() {
         const matched = initialListings.find((item) => item.id === buyParcelId);
         if (matched && matched.saleStatus !== 'sold') {
           setBuyParcel(matched);
-          const snapshotWallets = getSnapshotDetectedWallets();
-          if (snapshotWallets.length > 0) {
-            void connectWithWallet(snapshotWallets[0]);
+          const current = getActiveUserAccount();
+          if (current) {
+            const snapshotWallets = getSnapshotDetectedWallets();
+            if (snapshotWallets.length > 0) {
+              void connectWithWallet(snapshotWallets[0]);
+            }
           }
         }
       }
@@ -148,6 +221,8 @@ export default function ExploreLandPage() {
 
     return () => {
       unsubscribe();
+      window.removeEventListener('anagu-user-changed', syncUser);
+      window.removeEventListener('storage', syncUser);
     };
   }, []);
 
@@ -161,7 +236,13 @@ export default function ExploreLandPage() {
       if (accounts.length === 0) {
         setConnectedWallet(null);
       } else {
-        setConnectedWallet((prev) => (prev ? { ...prev, address: accounts[0] } : prev));
+        const nextAddress = accounts[0];
+        setConnectedWallet((prev) => (prev ? { ...prev, address: nextAddress } : prev));
+        const current = getActiveUserAccount();
+        if (current) {
+          const updated = updateUserProfile(current.id, { walletAddress: nextAddress });
+          if (updated) setActiveUser(updated);
+        }
       }
     };
 
@@ -222,31 +303,79 @@ export default function ExploreLandPage() {
     setBuyParcel(parcel);
     setBuyError(null);
     setWalletError(null);
+    setGateError(null);
     setCompletedOrder(null);
 
-    // Immediately trigger any installed Web3 wallet on PC or mobile on Buy Land click
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const availableWallets =
-      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+    const currentUser = getActiveUserAccount();
+    setActiveUser(currentUser);
 
-    if (availableWallets.length > 0) {
-      setShowMobileLinks(false);
-      const targetWallet = activeProvider
-        ? availableWallets.find((w) => w.id === activeProvider.id) ?? availableWallets[0]
-        : availableWallets[0];
-      void connectWithWallet(targetWallet);
+    // Require account sign-in or creation before accessing the land purchase workflow
+    if (!currentUser) {
+      setBuyAuthMode('signin');
       return;
     }
 
-    // No injected provider (e.g. mobile Chrome/Safari or desktop without wallet extension)
-    const mobile = isMobileDevice();
-    setIsMobile(mobile);
-    setShowMobileLinks(mobile);
+    prefillBuyerFromUser(currentUser);
+    triggerWalletDiscoveryAndConnect();
+  };
 
-    if (mobile && isAndroidDevice()) {
-      // Trigger Android OS Web3 wallet chooser intent immediately on click
-      triggerDeviceEthereumWalletIntent();
+  const handleAuthGateSuccess = (user: UserAccount) => {
+    if (user.status === 'suspended') {
+      setGateError('This user account has been suspended by the registry administration.');
+      return;
     }
+    setActiveUser(user);
+    setGateError(null);
+    setGateIdentifier('');
+    setGateName('');
+    setGatePhone('');
+    setGateEmail('');
+    prefillBuyerFromUser(user);
+    triggerWalletDiscoveryAndConnect();
+  };
+
+  const handleGateSignIn = (e: FormEvent) => {
+    e.preventDefault();
+    setGateError(null);
+    if (!gateIdentifier.trim()) {
+      setGateError('Please enter your email address or phone number.');
+      return;
+    }
+    const { user, error } = signInUser(gateIdentifier);
+    if (error || !user) {
+      setGateError(
+        error || 'No account found. Switch to Create Account or sign up with Google.',
+      );
+      return;
+    }
+    handleAuthGateSuccess(user);
+  };
+
+  const handleGateSignUp = (e: FormEvent) => {
+    e.preventDefault();
+    setGateError(null);
+    if (!gateName.trim()) {
+      setGateError('Please enter your full name.');
+      return;
+    }
+    if (!gatePhone.trim()) {
+      setGateError('Please enter your phone number.');
+      return;
+    }
+    if (gateEmail.trim() && !gateEmail.includes('@')) {
+      setGateError('Please enter a valid email address or leave email blank.');
+      return;
+    }
+    const { user, error } = createUserAccount({
+      fullName: gateName,
+      phone: gatePhone,
+      email: gateEmail,
+    });
+    if (error || !user) {
+      setGateError(error || 'Unable to create account.');
+      return;
+    }
+    handleAuthGateSuccess(user);
   };
 
   const handleRefreshWallets = () => {
@@ -267,6 +396,13 @@ export default function ExploreLandPage() {
     e.preventDefault();
     if (!buyParcel) return;
     setBuyError(null);
+
+    const currentUser = getActiveUserAccount();
+    if (!currentUser) {
+      setActiveUser(null);
+      setGateError('Please sign in to your account or create an account to purchase this land.');
+      return;
+    }
 
     if (!buyerName.trim()) {
       setBuyError('Please enter your full name.');
@@ -338,12 +474,20 @@ export default function ExploreLandPage() {
       setSubmittingPurchase(false);
     }
 
+    const buyerAccount = ensureUserAccountForRegistration({
+      fullName: buyerName.trim(),
+      email: buyerEmail.trim(),
+      phone: buyerPhone.trim(),
+      walletAddress: activeConnected?.address,
+    });
+
     const order = createPurchaseOrder({
       landId: buyParcel.id,
       landTitle: buyParcel.title,
       parcelRef: buyParcel.parcelRef,
       priceNgn: buyParcel.priceNgn,
       priceUsd: getListingPriceUsd(buyParcel),
+      buyerUserId: buyerAccount.id,
       buyerName: buyerName.trim(),
       buyerEmail: buyerEmail.trim(),
       buyerPhone: buyerPhone.trim(),
@@ -878,7 +1022,11 @@ export default function ExploreLandPage() {
               <div>
                 <p className="text-xs font-mono text-[#38BDF8]">{buyParcel.parcelRef}</p>
                 <h2 className="text-lg font-bold text-[#F4F7FB] mt-0.5">
-                  {completedOrder ? 'Land Purchase Confirmed' : `Buy: ${buyParcel.title}`}
+                  {completedOrder
+                    ? 'Land Purchase Confirmed'
+                    : !activeUser
+                      ? 'Sign In or Create an Account'
+                      : `Buy: ${buyParcel.title}`}
                 </h2>
               </div>
               <button
@@ -886,6 +1034,7 @@ export default function ExploreLandPage() {
                 onClick={() => {
                   setBuyParcel(null);
                   setCompletedOrder(null);
+                  setGateError(null);
                 }}
                 className="h-8 w-8 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB] flex items-center justify-center"
                 aria-label="Close purchase modal"
@@ -953,19 +1102,222 @@ export default function ExploreLandPage() {
                     </p>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBuyParcel(null);
-                    setCompletedOrder(null);
-                  }}
-                  className="w-full h-11 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9]"
-                >
-                  Continue Exploring Land
-                </button>
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  <Link
+                    href="/dashboard"
+                    className="flex-1 h-11 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] inline-flex items-center justify-center"
+                  >
+                    Track in My Dashboard
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBuyParcel(null);
+                      setCompletedOrder(null);
+                    }}
+                    className="flex-1 h-11 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-sm font-medium text-[#F4F7FB] hover:border-[#38BDF8]"
+                  >
+                    Continue Exploring
+                  </button>
+                </div>
+              </div>
+            ) : !activeUser ? (
+              <div className="mt-5 space-y-5">
+                {/* Selected Land Summary */}
+                <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.18)] p-3.5 flex items-center justify-between gap-3 text-xs">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-[#F4F7FB] truncate">{buyParcel.title}</p>
+                    <p className="text-[#94A3B8] truncate">
+                      {buyParcel.location} · {buyParcel.areaSqm.toLocaleString()} sqm
+                    </p>
+                  </div>
+                  <div className="text-right font-mono tabular-nums shrink-0">
+                    <p className="font-bold text-[#F4F7FB]">
+                      {formatUsd(getListingPriceUsd(buyParcel))}
+                    </p>
+                    <p className="text-[11px] font-semibold text-[#38BDF8]">
+                      ≈ {formatEthFromUsd(getListingPriceUsd(buyParcel))}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Account Required Notice */}
+                <div className="rounded-lg bg-[#05080D] border border-[#38BDF8]/30 p-3.5 flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-[#38BDF8]/10 text-[#38BDF8] flex items-center justify-center shrink-0">
+                    <Lock className="h-4 w-4" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-[#F4F7FB]">
+                      Account Required Before Buying Land
+                    </p>
+                    <p className="text-xs text-[#94A3B8] leading-relaxed">
+                      Please sign in to your account to continue buying this parcel. If you don&apos;t have an account yet, create one below or sign up with Google.
+                    </p>
+                  </div>
+                </div>
+
+                {gateError && (
+                  <div
+                    role="alert"
+                    className="rounded-lg bg-rose-950/30 border border-rose-500/40 px-3 py-2 text-xs text-rose-300"
+                  >
+                    {gateError}
+                  </div>
+                )}
+
+                <GoogleSignUpButton
+                  label="Sign up with Google"
+                  onSuccess={handleAuthGateSuccess}
+                  onError={(msg) => setGateError(msg)}
+                />
+
+                <div className="relative flex items-center">
+                  <div className="flex-grow border-t border-[rgba(91,133,167,0.20)]" />
+                  <span className="mx-3 text-[11px] font-mono uppercase tracking-wider text-[#64748B]">
+                    or with email / phone
+                  </span>
+                  <div className="flex-grow border-t border-[rgba(91,133,167,0.20)]" />
+                </div>
+
+                {/* Sign In / Create Account Switcher */}
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.20)]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBuyAuthMode('signin');
+                      setGateError(null);
+                    }}
+                    className={`h-9 rounded-md text-xs font-semibold transition-colors ${
+                      buyAuthMode === 'signin'
+                        ? 'bg-[#38BDF8] text-[#020305]'
+                        : 'text-[#94A3B8] hover:text-[#F4F7FB]'
+                    }`}
+                  >
+                    Sign In to Account
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBuyAuthMode('signup');
+                      setGateError(null);
+                    }}
+                    className={`h-9 rounded-md text-xs font-semibold transition-colors ${
+                      buyAuthMode === 'signup'
+                        ? 'bg-[#38BDF8] text-[#020305]'
+                        : 'text-[#94A3B8] hover:text-[#F4F7FB]'
+                    }`}
+                  >
+                    Create an Account
+                  </button>
+                </div>
+
+                {buyAuthMode === 'signin' ? (
+                  <form onSubmit={handleGateSignIn} className="space-y-3.5">
+                    <div>
+                      <label htmlFor="gate-identifier" className="block text-xs text-[#94A3B8] mb-1">
+                        Email Address or Phone Number *
+                      </label>
+                      <input
+                        id="gate-identifier"
+                        type="text"
+                        required
+                        value={gateIdentifier}
+                        onChange={(e) => setGateIdentifier(e.target.value)}
+                        placeholder="you@example.com or +234 803 123 4567"
+                        className="w-full h-10 px-3 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setBuyParcel(null)}
+                        className="flex-1 h-10 rounded-[8px] border border-[rgba(91,133,167,0.25)] text-xs text-[#94A3B8] hover:text-[#F4F7FB]"
+                      >
+                        Keep Exploring
+                      </button>
+                      <button
+                        type="submit"
+                        className="flex-1 h-10 rounded-[8px] bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9]"
+                      >
+                        Sign In &amp; Continue
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <form onSubmit={handleGateSignUp} className="space-y-3.5">
+                    <div>
+                      <label htmlFor="gate-name" className="block text-xs text-[#94A3B8] mb-1">
+                        Full Name *
+                      </label>
+                      <input
+                        id="gate-name"
+                        type="text"
+                        required
+                        value={gateName}
+                        onChange={(e) => setGateName(e.target.value)}
+                        placeholder="e.g. Chief Adewale Ogunleye"
+                        className="w-full h-10 px-3 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label htmlFor="gate-phone" className="block text-xs text-[#94A3B8] mb-1">
+                          Phone Number *
+                        </label>
+                        <input
+                          id="gate-phone"
+                          type="tel"
+                          required
+                          value={gatePhone}
+                          onChange={(e) => setGatePhone(e.target.value)}
+                          placeholder="+234 800 000 0000"
+                          className="w-full h-10 px-3 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="gate-email" className="block text-xs text-[#94A3B8] mb-1">
+                          Email Address (Optional)
+                        </label>
+                        <input
+                          id="gate-email"
+                          type="email"
+                          value={gateEmail}
+                          onChange={(e) => setGateEmail(e.target.value)}
+                          placeholder="you@example.com"
+                          className="w-full h-10 px-3 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setBuyParcel(null)}
+                        className="flex-1 h-10 rounded-[8px] border border-[rgba(91,133,167,0.25)] text-xs text-[#94A3B8] hover:text-[#F4F7FB]"
+                      >
+                        Keep Exploring
+                      </button>
+                      <button
+                        type="submit"
+                        className="flex-1 h-10 rounded-[8px] bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9]"
+                      >
+                        Create Account &amp; Continue
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
             ) : (
               <form onSubmit={handlePurchaseSubmit} className="mt-5 space-y-4">
+                <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.20)] px-3.5 py-2 flex items-center justify-between gap-2 text-xs">
+                  <span className="inline-flex items-center gap-1.5 text-[#94A3B8] truncate">
+                    <User className="h-3.5 w-3.5 text-[#38BDF8] shrink-0" />
+                    Signed in as <strong className="text-[#F4F7FB] truncate">{activeUser.fullName}</strong>
+                  </span>
+                  <Link href="/dashboard" className="text-[11px] font-mono text-[#38BDF8] hover:underline shrink-0">
+                    My Account
+                  </Link>
+                </div>
+
                 <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.18)] p-3.5 flex items-center justify-between gap-3 text-xs">
                   <span className="text-[#94A3B8]">
                     {buyParcel.location} · {buyParcel.areaSqm.toLocaleString()} sqm
@@ -991,7 +1343,7 @@ export default function ExploreLandPage() {
                     </div>
                     {connectedWallet ? (
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-emerald-400">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        <CheckCircle2 className="h-3.5 w-3.5" />
                         Connected
                       </span>
                     ) : walletConnecting ? (
@@ -1001,7 +1353,7 @@ export default function ExploreLandPage() {
                       </span>
                     ) : (
                       <span className="text-[11px] font-mono text-amber-300">
-                        Wallet Prompt
+                        Not Connected
                       </span>
                     )}
                   </div>
@@ -1089,22 +1441,31 @@ export default function ExploreLandPage() {
                     </div>
                   )}
 
-                  {/* Controls for re-detecting desktop extensions or opening mobile wallet apps */}
+                  {/* Primary Connect Wallet Control + Mobile Fallback */}
                   <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                    {detectedWallets.length === 0 && (
+                    {!connectedWallet && (
                       <button
                         type="button"
-                        onClick={handleRefreshWallets}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9]"
+                        disabled={walletConnecting}
+                        onClick={
+                          detectedWallets.length > 0
+                            ? () => void connectWithWallet(detectedWallets[0])
+                            : handleRefreshWallets
+                        }
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9] disabled:opacity-60 whitespace-nowrap"
                       >
-                        <RefreshCw className="h-3.5 w-3.5" />
-                        <span>Trigger / Detect Wallet</span>
+                        {walletConnecting ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Wallet className="h-3.5 w-3.5" />
+                        )}
+                        <span>{walletConnecting ? 'Connecting Wallet…' : 'Connect Wallet'}</span>
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={() => setShowMobileLinks((prev) => !prev)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0A0F16] border border-[rgba(91,133,167,0.25)] text-[11px] text-[#94A3B8] hover:text-[#F4F7FB]"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#0A0F16] border border-[rgba(91,133,167,0.25)] text-[11px] text-[#94A3B8] hover:text-[#F4F7FB] whitespace-nowrap"
                     >
                       <Smartphone className="h-3.5 w-3.5 text-[#38BDF8]" />
                       <span>

@@ -45,13 +45,13 @@ export function Hero() {
             Secure, tamper-evident land titles backed by statutory governance and immutable blockchain verification.
           </p>
 
-          {/* Two Centered Action Buttons: Register Land & Explore Land */}
+          {/* Two Centered Action Buttons: Register an Account & Explore Land */}
           <div className="relative z-10 flex flex-wrap items-center justify-center gap-4 w-full sm:w-auto">
             <Link
-              href="/register"
+              href="/dashboard?mode=signup"
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-12 px-8 rounded-lg bg-[#38BDF8] text-[#020305] text-[15px] font-semibold border border-[rgba(103,232,249,0.45)] hover:bg-[#67E8F9] hover:shadow-[0_0_24px_rgba(56,189,248,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38BDF8] transition-all duration-200 active:scale-[0.98] whitespace-nowrap shrink-0"
             >
-              <span>Register Land</span>
+              <span>Register an Account</span>
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
 

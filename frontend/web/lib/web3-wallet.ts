@@ -400,13 +400,14 @@ export function triggerDeviceEthereumWalletIntent(): void {
 }
 
 /**
- * Builds universal mobile wallet deep links so tapping any mobile wallet opens `/explore?buyParcel=<id>`
- * inside that wallet's built-in DApp browser and immediately triggers `eth_requestAccounts`.
+ * Builds universal mobile wallet deep links so tapping any mobile wallet opens the given
+ * app path inside that wallet's built-in DApp browser.
  */
-export function getMobileWalletDeepLinks(parcelId: string): MobileWalletDeepLink[] {
+export function getMobileWalletDeepLinksForPath(relativePath: string): MobileWalletDeepLink[] {
   if (typeof window === 'undefined') return [];
 
-  const targetUrl = `${window.location.origin}/explore?buyParcel=${encodeURIComponent(parcelId)}`;
+  const normalizedPath = relativePath.startsWith('/') ? relativePath : `/${relativePath}`;
+  const targetUrl = `${window.location.origin}${normalizedPath}`;
   const hostAndPath = targetUrl.replace(/^https?:\/\//, '');
   const encodedUrl = encodeURIComponent(targetUrl);
   const encodedOrigin = encodeURIComponent(window.location.origin);
@@ -455,4 +456,12 @@ export function getMobileWalletDeepLinks(parcelId: string): MobileWalletDeepLink
       accentClass: 'border-pink-500/40 hover:border-pink-400 text-pink-300',
     },
   ];
+}
+
+/**
+ * Builds universal mobile wallet deep links so tapping any mobile wallet opens `/explore?buyParcel=<id>`
+ * inside that wallet's built-in DApp browser and immediately triggers `eth_requestAccounts`.
+ */
+export function getMobileWalletDeepLinks(parcelId: string): MobileWalletDeepLink[] {
+  return getMobileWalletDeepLinksForPath(`/explore?buyParcel=${encodeURIComponent(parcelId)}`);
 }
