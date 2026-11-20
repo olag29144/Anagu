@@ -1,3 +1,7 @@
+import { ethers } from 'ethers';
+import { LAND_REGISTRY_ADDRESS } from './contracts';
+import { formatContractError } from './ethers-contracts';
+
 export interface Eip1193Provider {
   request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>;
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
@@ -52,7 +56,7 @@ export interface MobileWalletDeepLink {
   accentClass: string;
 }
 
-export const ANAGU_ESCROW_ADDRESS = '0x71C83812a19f20108A456789b910123456789012';
+export const ANAGU_ESCROW_ADDRESS = LAND_REGISTRY_ADDRESS;
 
 const CHAIN_NAMES: Record<string, string> = {
   '0x1': 'Ethereum Mainnet',
@@ -208,66 +212,42 @@ export function getSnapshotDetectedWallets(): DetectedWalletProvider[] {
   return collectLegacyProviders();
 }
 
-function formatHexWeiToEth(hexBalance: string): string {
-  try {
-    const wei = BigInt(hexBalance);
-    const whole = wei / BigInt('1000000000000000000');
-    const remainder = wei % BigInt('1000000000000000000');
-    const decimals = remainder.toString().padStart(18, '0').slice(0, 4);
-    return `${whole.toString()}.${decimals}`;
-  } catch {
-    return '0.0000';
-  }
-}
-
 export function mapWalletError(err: unknown): string {
   if (typeof err === 'object' && err !== null) {
-    const code = (err as { code?: number }).code;
-    const message = (err as { message?: string }).message;
-    if (code === 4001) {
+    const code = (err as { code?: number | string }).code;
+    if (code === 4001 || code === 'ACTION_REJECTED') {
       return 'Wallet request was declined in your Web3 wallet.';
     }
     if (code === -32002) {
       return 'A wallet approval prompt is already open. Please check your Web3 wallet extension or app.';
     }
-    if (message) return message;
   }
-  return err instanceof Error ? err.message : 'Unable to connect Web3 wallet.';
+  return formatContractError(err);
 }
 
 /**
- * Triggers `eth_requestAccounts` on the target wallet provider to pop up the user's wallet.
+ * Connects to the selected wallet via ethers.js BrowserProvider (`eth_requestAccounts`).
  */
 export async function connectWalletProvider(
   wallet: DetectedWalletProvider,
 ): Promise<ConnectedWalletState> {
-  const accounts = (await wallet.provider.request({
-    method: 'eth_requestAccounts',
-  })) as string[];
-
-  if (!Array.isArray(accounts) || accounts.length === 0) {
-    throw new Error('No wallet account was returned by your Web3 wallet.');
-  }
-
-  const address = accounts[0];
+  const browserProvider = new ethers.BrowserProvider(wallet.provider);
+  await browserProvider.send('eth_requestAccounts', []);
+  const signer = await browserProvider.getSigner();
+  const address = await signer.getAddress();
 
   let chainId = '0x1';
   try {
-    const fetchedChainId = (await wallet.provider.request({
-      method: 'eth_chainId',
-    })) as string;
-    if (fetchedChainId) chainId = fetchedChainId;
+    const network = await browserProvider.getNetwork();
+    chainId = `0x${network.chainId.toString(16)}`;
   } catch {
     // Keep fallback chainId
   }
 
   let balanceEth = '0.0000';
   try {
-    const hexBal = (await wallet.provider.request({
-      method: 'eth_getBalance',
-      params: [address, 'latest'],
-    })) as string;
-    if (hexBal) balanceEth = formatHexWeiToEth(hexBal);
+    const balanceWei = await browserProvider.getBalance(address);
+    balanceEth = Number(ethers.formatEther(balanceWei)).toFixed(4);
   } catch {
     // Ignore balance read failures on restricted RPCs
   }
@@ -281,15 +261,6 @@ export async function connectWalletProvider(
     walletName: wallet.name,
     walletIcon: wallet.icon,
   };
-}
-
-function toUtf8Hex(input: string): string {
-  const bytes = new TextEncoder().encode(input);
-  let hex = '0x';
-  for (let i = 0; i < bytes.length; i += 1) {
-    hex += bytes[i].toString(16).padStart(2, '0');
-  }
-  return hex;
 }
 
 export async function signLandPurchaseAuthorization(
@@ -331,10 +302,9 @@ export async function signLandPurchaseAuthorization(
     `Timestamp: ${new Date().toISOString()}`,
   ].join('\n');
 
-  const signature = (await provider.request({
-    method: 'personal_sign',
-    params: [toUtf8Hex(message), params.address],
-  })) as string;
+  const browserProvider = new ethers.BrowserProvider(provider);
+  const signer = await browserProvider.getSigner();
+  const signature = await signer.signMessage(message);
 
   return signature;
 }
@@ -350,7 +320,7 @@ export async function sendLandPurchaseTransaction(
   },
 ): Promise<string> {
   const recipientAddress =
-    params.sellerWalletAddress && /^0x[a-fA-F0-9]{40}$/.test(params.sellerWalletAddress)
+    params.sellerWalletAddress && ethers.isAddress(params.sellerWalletAddress)
       ? params.sellerWalletAddress
       : ANAGU_ESCROW_ADDRESS;
 
@@ -360,23 +330,21 @@ export async function sendLandPurchaseTransaction(
       : Math.round((params.priceNgn || 0) / 1600);
   const ethAmount = resolvedUsd > 0 ? (resolvedUsd / 3200).toFixed(4) : '0.0000';
 
-  const dataHex = toUtf8Hex(
-    `anagu:purchase:${params.parcelRef}:usd:${resolvedUsd}:eth:${ethAmount}:${Date.now()}`,
+  const dataHex = ethers.hexlify(
+    ethers.toUtf8Bytes(
+      `anagu:purchase:${params.parcelRef}:usd:${resolvedUsd}:eth:${ethAmount}:${Date.now()}`,
+    ),
   );
 
-  const txHash = (await provider.request({
-    method: 'eth_sendTransaction',
-    params: [
-      {
-        from: params.address,
-        to: recipientAddress,
-        value: '0x0',
-        data: dataHex,
-      },
-    ],
-  })) as string;
+  const browserProvider = new ethers.BrowserProvider(provider);
+  const signer = await browserProvider.getSigner();
+  const tx = await signer.sendTransaction({
+    to: recipientAddress,
+    value: BigInt(0),
+    data: dataHex,
+  });
 
-  return txHash;
+  return tx.hash;
 }
 
 /**

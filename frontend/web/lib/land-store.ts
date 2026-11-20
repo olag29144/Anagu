@@ -48,12 +48,18 @@ export interface LandListing {
   perimeterMeters?: number;
   imageUrl: string;
   documents: LandDocument[];
+  onChainTokenId?: string;
+  onChainTxHash?: string;
+  onChainParcelId?: string;
+  onChainApplicationId?: string;
+  onChainRevoked?: boolean;
   createdAt: string;
 }
 
 export type PurchasePaymentMethod =
   | 'Web3 Wallet Signature (EIP-191)'
   | 'Web3 Wallet On-Chain Escrow'
+  | 'LandRegistry On-Chain Title Transfer'
   | 'Bank Escrow Transfer'
   | 'Mortgage Financing'
   | 'Direct Institutional Settlement';
@@ -75,6 +81,9 @@ export interface LandPurchaseOrder {
   walletChainName?: string;
   walletSignature?: string;
   walletTxHash?: string;
+  onChainTokenId?: string;
+  feeTokenAmount?: string;
+  feeApproveTxHash?: string;
   notes: string;
   status: 'pending_settlement' | 'completed';
   createdAt: string;

@@ -4,7 +4,23 @@ import { useState, useEffect, FormEvent } from 'react';
 import { apiCall } from '@/lib/api';
 import { StatusBadge } from '@/components/status-badge';
 import { PortalHeader } from '@/components/portal-header';
-import { Landmark, AlertTriangle, ShieldAlert, Sparkles } from 'lucide-react';
+import {
+  subscribeWalletDiscovery,
+  getSnapshotDetectedWallets,
+  connectWalletProvider,
+  formatShortAddress,
+  type DetectedWalletProvider,
+  type ConnectedWalletState,
+} from '@/lib/web3-wallet';
+import {
+  revokeTitleOnChain,
+  formatContractError,
+} from '@/lib/ethers-contracts';
+import {
+  ContractRevocationGround,
+  LAND_TITLE_NFT_ADDRESS,
+} from '@/lib/contracts';
+import { Landmark, AlertTriangle, ShieldAlert, Sparkles, Wallet } from 'lucide-react';
 
 type RevocationGround = 'OverridingPublicInterest' | 'BreachOfStatutoryCondition';
 
@@ -25,7 +41,7 @@ interface AuditEntry {
  * Governor Page — Client Component.
  *
  * Provides the statutory revocation form (Land Use Act 1978, Section 28)
- * and a list of recent revocation audit entries.
+ * with direct ethers.js LandTitleNFT.revoke execution and audit history.
  */
 export default function GovernorPage() {
   const [tokenId, setTokenId] = useState('');
@@ -36,6 +52,39 @@ export default function GovernorPage() {
 
   const [revocations, setRevocations] = useState<AuditEntry[]>([]);
   const [loadingRevocations, setLoadingRevocations] = useState(true);
+
+  const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
+  const [activeProvider, setActiveProvider] = useState<DetectedWalletProvider | null>(null);
+  const [connectedWallet, setConnectedWallet] = useState<ConnectedWalletState | null>(null);
+  const [walletConnecting, setWalletConnecting] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = subscribeWalletDiscovery((wallets) => {
+      setDetectedWallets(wallets);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  async function handleConnectGovernorWallet() {
+    setError(null);
+    setWalletConnecting(true);
+    try {
+      const wallets =
+        detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+      if (wallets.length === 0) {
+        setError('No Web3 wallet detected. Connect MetaMask or a Governor-authorized wallet to revoke directly on-chain, or submit via the Registry API.');
+        return;
+      }
+      const target = wallets[0];
+      setActiveProvider(target);
+      const connected = await connectWalletProvider(target);
+      setConnectedWallet(connected);
+    } catch (err) {
+      setError(formatContractError(err));
+    } finally {
+      setWalletConnecting(false);
+    }
+  }
 
   // Fetch recent revocation audit entries on mount
   useEffect(() => {
@@ -65,6 +114,35 @@ export default function GovernorPage() {
 
     setSubmitting(true);
     try {
+      if (activeProvider && connectedWallet) {
+        const contractGround =
+          ground === 'OverridingPublicInterest'
+            ? ContractRevocationGround.OverridingPublicInterest
+            : ContractRevocationGround.BreachOfStatutoryCondition;
+
+        const result = await revokeTitleOnChain(
+          activeProvider.provider,
+          trimmedTokenId,
+          contractGround,
+        );
+
+        // Best-effort sync to backend audit log if available
+        try {
+          await apiCall(`/titles/${encodeURIComponent(trimmedTokenId)}/revoke`, {
+            method: 'POST',
+            body: JSON.stringify({ ground, txHash: result.txHash }),
+          });
+        } catch {
+          // On-chain revocation succeeded directly via ethers.js
+        }
+
+        setSuccess(
+          `Land Title Token #${result.tokenId} revoked on-chain (${LAND_TITLE_NFT_ADDRESS.slice(0, 10)}…) under ${ground}. Tx Hash: ${result.txHash}`,
+        );
+        setTokenId('');
+        return;
+      }
+
       await apiCall(`/titles/${encodeURIComponent(trimmedTokenId)}/revoke`, {
         method: 'POST',
         body: JSON.stringify({ ground }),
@@ -72,7 +150,13 @@ export default function GovernorPage() {
       setSuccess(`Land Title Token #${trimmedTokenId} successfully revoked under: ${ground}. Immutable blockchain state updated.`);
       setTokenId('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Revocation failed. Please try again.');
+      setError(
+        activeProvider && connectedWallet
+          ? formatContractError(err)
+          : err instanceof Error
+            ? err.message
+            : 'Revocation failed. Please try again.',
+      );
     } finally {
       setSubmitting(false);
     }
@@ -84,18 +168,41 @@ export default function GovernorPage() {
 
       <main className="mx-auto max-w-4xl px-4 py-8">
         {/* Header */}
-        <div className="mb-8 pb-6 border-b border-[#1E293B]">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-[#F4F7FB]">
-              Statutory Land Title Revocation Executive Console
-            </h1>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
-              LAND USE ACT (1978) §28
-            </span>
+        <div className="mb-8 pb-6 border-b border-[#1E293B] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-[#F4F7FB]">
+                Statutory Land Title Revocation Executive Console
+              </h1>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                LAND USE ACT (1978) §28
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-[#94A3B8]">
+              Statutory gubernatorial prerogative pursuant to Section 28 of the Land Use Act (1978) · LandTitleNFT{' '}
+              <span className="font-mono text-[#38BDF8]">{formatShortAddress(LAND_TITLE_NFT_ADDRESS)}</span>
+            </p>
           </div>
-          <p className="mt-1 text-xs text-[#94A3B8]">
-            Statutory gubernatorial prerogative pursuant to Section 28 of the Land Use Act (1978), Laws of the Federation of Nigeria.
-          </p>
+
+          <button
+            type="button"
+            disabled={walletConnecting}
+            onClick={() => void handleConnectGovernorWallet()}
+            className={`shrink-0 inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border text-xs font-medium transition-colors ${
+              connectedWallet
+                ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                : 'bg-[#0A0F16] border-[#1E293B] hover:border-[#38BDF8] text-[#F4F7FB]'
+            }`}
+          >
+            <Wallet className="h-3.5 w-3.5 text-[#38BDF8]" />
+            <span>
+              {walletConnecting
+                ? 'Connecting…'
+                : connectedWallet
+                  ? `${connectedWallet.walletName}: ${formatShortAddress(connectedWallet.address)}`
+                  : 'Connect Governor Wallet (ethers.js)'}
+            </span>
+          </button>
         </div>
 
         {/* Revocation form */}
@@ -120,7 +227,7 @@ export default function GovernorPage() {
           {success && (
             <div
               role="status"
-              className="mb-5 rounded-lg bg-emerald-950/30 border border-emerald-500/40 p-4 text-xs text-emerald-300"
+              className="mb-5 rounded-lg bg-emerald-950/30 border border-emerald-500/40 p-4 text-xs text-emerald-300 break-all"
             >
               {success}
             </div>
@@ -153,7 +260,7 @@ export default function GovernorPage() {
                 placeholder="e.g. 1041 or 1042"
               />
               <p className="mt-1 text-[11px] text-[#64748B] font-mono">
-                The smart contract token ID of the Certificate of Occupancy registered on the permissioned ledger.
+                The smart contract token ID of the Certificate of Occupancy registered on LandTitleNFT.
               </p>
             </div>
 
@@ -183,7 +290,10 @@ export default function GovernorPage() {
             <div className="rounded-lg bg-amber-950/20 border border-amber-500/30 p-3.5 text-xs text-amber-300 flex items-start gap-2.5">
               <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
               <span>
-                <strong>Statutory Notice:</strong> Execution emits a permanent on-chain event on the Besu ledger and transitions the token metadata status to <code>revoked</code>. This act is legally binding across State cadastre registers.
+                <strong>Statutory Notice:</strong>{' '}
+                {connectedWallet
+                  ? `Connected wallet (${formatShortAddress(connectedWallet.address)}) will invoke LandTitleNFT.revoke(tokenId, ground) directly via ethers.js (requires GOVERNOR_ROLE).`
+                  : 'Execution emits a permanent on-chain TitleRevoked event and transitions the token metadata status to revoked.'}
               </span>
             </div>
 
@@ -193,7 +303,13 @@ export default function GovernorPage() {
               className="flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-5 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-rose-700 transition-all disabled:opacity-60"
             >
               <ShieldAlert className="h-4 w-4" />
-              <span>{submitting ? 'Executing Revocation on Ledger…' : 'Execute Statutory Revocation'}</span>
+              <span>
+                {submitting
+                  ? 'Executing Revocation on Ledger…'
+                  : connectedWallet
+                    ? 'Revoke Title On-Chain (ethers.js)'
+                    : 'Execute Statutory Revocation'}
+              </span>
             </button>
           </form>
         </div>

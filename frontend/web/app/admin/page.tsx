@@ -51,11 +51,13 @@ import {
   RefreshCw,
   FileSpreadsheet,
   CheckCheck,
+  FileCode2,
 } from 'lucide-react';
+import { ContractRegistryPanel } from '@/components/web3/ContractRegistryPanel';
 
 const ADMIN_SESSION_KEY = 'anagu_admin_authenticated_v1';
 
-type AdminTab = 'users' | 'registrations' | 'pending_queue' | 'marketplace' | 'orders';
+type AdminTab = 'users' | 'registrations' | 'pending_queue' | 'marketplace' | 'orders' | 'contracts';
 
 function downloadCsvFile(filename: string, rows: string[][]) {
   const escapeCell = (val: string) => `"${String(val ?? '').replace(/"/g, '""')}"`;
@@ -556,6 +558,7 @@ export default function StandaloneAdminPage() {
     pending_queue: 'Pending Review',
     marketplace: 'For Sale Inventory',
     orders: 'Payments & Settlement',
+    contracts: 'Smart Contracts (ethers.js)',
   };
 
   const navItems: Array<{
@@ -597,6 +600,13 @@ export default function StandaloneAdminPage() {
       count: `${paidOrders.length}/${orders.length}`,
       icon: CreditCard,
       toneClass: 'text-sky-400',
+    },
+    {
+      id: 'contracts',
+      label: 'Smart Contracts',
+      count: 3,
+      icon: FileCode2,
+      toneClass: 'text-indigo-400',
     },
   ];
 
@@ -1466,6 +1476,13 @@ export default function StandaloneAdminPage() {
                   </table>
                 </div>
               )}
+            </section>
+          )}
+
+          {/* TAB 6: Smart Contracts Registry & Verification */}
+          {activeTab === 'contracts' && (
+            <section className="space-y-4">
+              <ContractRegistryPanel />
             </section>
           )}
         </main>

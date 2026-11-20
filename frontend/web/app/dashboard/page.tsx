@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Navbar } from '@/components/landing/Navbar';
 import { ParcelMiniMap } from '@/components/gis/ParcelMiniMap';
 import { GoogleSignUpButton } from '@/components/auth/GoogleSignUpButton';
+import { ContractRegistryPanel } from '@/components/web3/ContractRegistryPanel';
 import {
   getLandListings,
   updateLandListing,
@@ -86,6 +87,7 @@ type SidebarSection =
   | 'sold'
   | 'rejected'
   | 'payment'
+  | 'contracts'
   | 'activities'
   | 'profile';
 
@@ -834,6 +836,7 @@ export default function UserDashboardPage() {
     sold: 'Sold Lands',
     rejected: 'Needs Revision / Rejected',
     payment: 'Payment & Orders',
+    contracts: 'Smart Contracts (ethers.js)',
     activities: 'Activities',
     profile: 'Account Details',
   };
@@ -877,6 +880,12 @@ export default function UserDashboardPage() {
       label: 'Payment',
       count: totalPaymentsCount,
       icon: CreditCard,
+    },
+    {
+      id: 'contracts',
+      label: 'Smart Contracts',
+      icon: ShieldCheck,
+      toneClass: 'text-[#67E8F9]',
     },
     {
       id: 'activities',
@@ -1593,6 +1602,14 @@ export default function UserDashboardPage() {
                 )}
               </div>
             </section>
+          )}
+
+          {/* VIEW 2B: Smart Contracts (ethers.js) */}
+          {activeSection === 'contracts' && (
+            <ContractRegistryPanel
+              provider={activeProvider?.provider ?? null}
+              walletAddress={connectedWallet?.address ?? activeUser.walletAddress ?? null}
+            />
           )}
 
           {/* VIEW 3: Activities Timeline */}

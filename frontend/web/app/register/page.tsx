@@ -10,6 +10,7 @@ import {
 import {
   addLandListing,
   getLandListings,
+  updateLandListing,
   getListingPriceUsd,
   formatFileSize,
   formatUsd,
@@ -41,6 +42,10 @@ import {
   mapWalletError,
   type DetectedWalletProvider,
 } from '@/lib/web3-wallet';
+import {
+  registerTitleOnChain,
+  formatContractError,
+} from '@/lib/ethers-contracts';
 import {
   AlertCircle,
   ArrowLeft,
@@ -161,8 +166,11 @@ export default function RegisterLandPage() {
   const [ownerEmail, setOwnerEmail] = useState('');
   const [ownerWalletAddress, setOwnerWalletAddress] = useState('');
   const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
+  const [connectedProvider, setConnectedProvider] = useState<DetectedWalletProvider | null>(null);
   const [connectingWallet, setConnectingWallet] = useState(false);
   const [showMobileWalletLinks, setShowMobileWalletLinks] = useState(false);
+  const [mintingOnChain, setMintingOnChain] = useState(false);
+  const [onChainMintError, setOnChainMintError] = useState<string | null>(null);
 
   // Land Details
   const [title, setTitle] = useState('');
@@ -333,6 +341,7 @@ export default function RegisterLandPage() {
     setConnectingWallet(true);
     try {
       const connected = await connectWalletProvider(wallets[0]);
+      setConnectedProvider(wallets[0]);
       setOwnerWalletAddress(connected.address);
       setShowMobileWalletLinks(false);
       const current = getActiveUserAccount();
@@ -343,6 +352,59 @@ export default function RegisterLandPage() {
       setError(mapWalletError(err));
     } finally {
       setConnectingWallet(false);
+    }
+  };
+
+  const handleRegisterOnChain = async () => {
+    if (!registeredLand) return;
+    setOnChainMintError(null);
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    const wallets =
+      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+    const walletToUse = connectedProvider ?? wallets[0];
+
+    if (!walletToUse) {
+      setOnChainMintError(
+        'No Web3 wallet detected. Connect MetaMask or another EIP-1193 wallet to mint on LandRegistry.',
+      );
+      return;
+    }
+
+    setMintingOnChain(true);
+    try {
+      const connected = await connectWalletProvider(walletToUse);
+      setConnectedProvider(walletToUse);
+      const targetOwner =
+        registeredLand.ownerWalletAddress &&
+        /^0x[a-fA-F0-9]{40}$/.test(registeredLand.ownerWalletAddress)
+          ? registeredLand.ownerWalletAddress
+          : connected.address;
+
+      const result = await registerTitleOnChain(walletToUse.provider, {
+        applicationRef: registeredLand.id,
+        ownerAddress: targetOwner,
+        parcelRef: registeredLand.parcelRef,
+        coordinates: registeredLand.coordinates,
+        polygon: registeredLand.polygon,
+        metadataUri: `anagu://title/${registeredLand.parcelRef}`,
+      });
+
+      const updatedList = updateLandListing(registeredLand.id, {
+        ownerWalletAddress: targetOwner,
+        onChainTokenId: result.tokenId,
+        onChainTxHash: result.txHash,
+        onChainParcelId: result.parcelIdBytes32,
+        onChainApplicationId: result.applicationIdBytes32,
+      });
+      const updatedItem = updatedList.find((l) => l.id === registeredLand.id) ?? null;
+      if (updatedItem) {
+        setRegisteredLand(updatedItem);
+      }
+      setExistingParcels(updatedList);
+    } catch (err) {
+      setOnChainMintError(formatContractError(err));
+    } finally {
+      setMintingOnChain(false);
     }
   };
 
@@ -682,6 +744,41 @@ export default function RegisterLandPage() {
                 {registeredLand.ownerWalletAddress && (
                   <div className="inline-block rounded-lg bg-[#05080D] border border-emerald-500/30 px-4 py-1.5 font-mono text-xs text-emerald-400">
                     ETH Wallet Linked: {registeredLand.ownerWalletAddress}
+                  </div>
+                )}
+                {registeredLand.onChainTxHash ? (
+                  <div className="w-full max-w-md rounded-lg bg-[#05080D] border border-emerald-500/40 p-3.5 text-left font-mono text-xs space-y-1">
+                    <p className="text-emerald-400 font-semibold">
+                      On-Chain Deed Minted via LandRegistry (Token #{registeredLand.onChainTokenId})
+                    </p>
+                    <p className="text-[#94A3B8] break-all">
+                      Tx Hash: <span className="text-[#67E8F9]">{registeredLand.onChainTxHash}</span>
+                    </p>
+                  </div>
+                ) : (
+                  <div className="w-full max-w-md space-y-2">
+                    {onChainMintError && (
+                      <p className="text-xs text-rose-300 bg-rose-950/30 border border-rose-500/35 rounded-lg px-3 py-2 text-left">
+                        {onChainMintError}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      disabled={mintingOnChain}
+                      onClick={() => void handleRegisterOnChain()}
+                      className="w-full h-10 px-4 rounded-[8px] bg-[#05080D] border border-[#38BDF8]/45 text-[#67E8F9] hover:bg-[#38BDF8]/10 text-xs font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60"
+                    >
+                      {mintingOnChain ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Wallet className="h-3.5 w-3.5" />
+                      )}
+                      <span>
+                        {mintingOnChain
+                          ? 'Approving Fee & Registering on LandRegistry…'
+                          : 'Record & Mint On-Chain via LandRegistry (ethers.js)'}
+                      </span>
+                    </button>
                   </div>
                 )}
               </div>

@@ -7,6 +7,7 @@ import {
   getLandListings,
   getListingPriceUsd,
   createPurchaseOrder,
+  updateLandListing,
   formatUsd,
   formatEthFromUsd,
   formatFileSize,
@@ -15,6 +16,10 @@ import {
   type LandPurchaseOrder,
   type PurchasePaymentMethod,
 } from '@/lib/land-store';
+import {
+  transferTitleOnChain,
+  verifyLandTitleOnChain,
+} from '@/lib/ethers-contracts';
 import {
   getActiveUserAccount,
   ensureUserAccountForRegistration,
@@ -98,6 +103,7 @@ export default function ExploreLandPage() {
   const [paymentMethod, setPaymentMethod] = useState<PurchasePaymentMethod>(
     'Web3 Wallet Signature (EIP-191)',
   );
+  const [onChainTokenIdInput, setOnChainTokenIdInput] = useState('');
   const [buyerNotes, setBuyerNotes] = useState('');
   const [buyError, setBuyError] = useState<string | null>(null);
   const [submittingPurchase, setSubmittingPurchase] = useState(false);
@@ -301,6 +307,7 @@ export default function ExploreLandPage() {
   const handleOpenBuy = (parcel: LandListing) => {
     setInspectParcel(null);
     setBuyParcel(parcel);
+    setOnChainTokenIdInput(parcel.onChainTokenId ?? '');
     setBuyError(null);
     setWalletError(null);
     setGateError(null);
@@ -419,10 +426,14 @@ export default function ExploreLandPage() {
 
     const isWeb3Method =
       paymentMethod === 'Web3 Wallet Signature (EIP-191)' ||
-      paymentMethod === 'Web3 Wallet On-Chain Escrow';
+      paymentMethod === 'Web3 Wallet On-Chain Escrow' ||
+      paymentMethod === 'LandRegistry On-Chain Title Transfer';
 
     let walletSignature: string | undefined;
     let walletTxHash: string | undefined;
+    let onChainTokenId: string | undefined;
+    let feeTokenAmount: string | undefined;
+    let feeApproveTxHash: string | undefined;
     let activeConnected = connectedWallet;
     let providerToUse = activeProvider?.provider;
 
@@ -456,6 +467,39 @@ export default function ExploreLandPage() {
             priceUsd: getListingPriceUsd(buyParcel),
             buyerName: buyerName.trim(),
             sellerWalletAddress: buyParcel.ownerWalletAddress,
+          });
+        } else if (paymentMethod === 'LandRegistry On-Chain Title Transfer') {
+          let resolvedTokenId = onChainTokenIdInput.trim() || buyParcel.onChainTokenId || '';
+          if (!resolvedTokenId) {
+            const onChainTitle = await verifyLandTitleOnChain(
+              buyParcel.parcelRef,
+              providerToUse,
+            );
+            if (onChainTitle && !onChainTitle.isRevoked) {
+              resolvedTokenId = onChainTitle.tokenId;
+            }
+          }
+          if (!resolvedTokenId) {
+            setSubmittingPurchase(false);
+            setBuyError(
+              'This parcel has not been minted on LandTitleNFT yet. Enter a minted Token ID or choose Web3 Wallet Signature / On-Chain Escrow.',
+            );
+            return;
+          }
+          const transferResult = await transferTitleOnChain(providerToUse, {
+            applicationRef: `ORD-${buyParcel.id}-${Date.now()}`,
+            tokenId: resolvedTokenId,
+            newOwnerAddress: activeConnected.address,
+          });
+          walletTxHash = transferResult.txHash;
+          onChainTokenId = transferResult.tokenId;
+          feeTokenAmount = transferResult.feePaidFormatted;
+          feeApproveTxHash = transferResult.approveTxHash;
+
+          updateLandListing(buyParcel.id, {
+            ownerWalletAddress: activeConnected.address,
+            onChainTokenId: transferResult.tokenId,
+            onChainTxHash: transferResult.txHash,
           });
         } else {
           walletTxHash = await sendLandPurchaseTransaction(providerToUse, {
@@ -497,6 +541,9 @@ export default function ExploreLandPage() {
       walletChainName: activeConnected?.chainName,
       walletSignature,
       walletTxHash,
+      onChainTokenId,
+      feeTokenAmount,
+      feeApproveTxHash,
       notes: buyerNotes.trim(),
     });
 
@@ -1101,6 +1148,22 @@ export default function ExploreLandPage() {
                       </span>
                     </p>
                   )}
+                  {completedOrder.onChainTokenId && (
+                    <p className="text-[#94A3B8]">
+                      LandTitleNFT Token ID:{' '}
+                      <span className="font-mono text-[#38BDF8]">
+                        #{completedOrder.onChainTokenId}
+                      </span>
+                    </p>
+                  )}
+                  {completedOrder.feeTokenAmount && (
+                    <p className="text-[#94A3B8]">
+                      LandFeeToken Transfer Fee:{' '}
+                      <span className="font-mono text-[#F4F7FB]">
+                        {completedOrder.feeTokenAmount} FEE
+                      </span>
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2.5">
                   <Link
@@ -1576,6 +1639,9 @@ export default function ExploreLandPage() {
                     <option value="Web3 Wallet On-Chain Escrow" className="bg-[#0A0F16]">
                       Web3 Wallet On-Chain Escrow (Send Tx)
                     </option>
+                    <option value="LandRegistry On-Chain Title Transfer" className="bg-[#0A0F16]">
+                      LandRegistry On-Chain Title Transfer (LandFeeToken)
+                    </option>
                     <option value="Bank Escrow Transfer" className="bg-[#0A0F16]">
                       Bank Escrow Transfer
                     </option>
@@ -1587,6 +1653,25 @@ export default function ExploreLandPage() {
                     </option>
                   </select>
                 </div>
+
+                {paymentMethod === 'LandRegistry On-Chain Title Transfer' && (
+                  <div className="rounded-lg bg-[#05080D] border border-[#38BDF8]/30 p-3 space-y-2">
+                    <label htmlFor="onChainTokenId" className="block text-xs text-[#67E8F9] font-mono">
+                      LandTitleNFT Token ID (leave blank to lookup by Parcel Ref)
+                    </label>
+                    <input
+                      id="onChainTokenId"
+                      type="text"
+                      value={onChainTokenIdInput}
+                      onChange={(e) => setOnChainTokenIdInput(e.target.value)}
+                      placeholder={buyParcel.onChainTokenId ? `Detected #${buyParcel.onChainTokenId}` : 'e.g. 1 (or auto-resolve from Parcel Ref)'}
+                      className="w-full h-9 px-3 rounded-[8px] bg-[#0A0F16] border border-[rgba(148,163,184,0.22)] text-xs font-mono text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
+                    />
+                    <p className="text-[11px] text-[#94A3B8]">
+                      Automatically approves the required <span className="font-mono text-[#38BDF8]">LandFeeToken</span> transfer fee and calls <span className="font-mono text-[#38BDF8]">LandRegistry.transferTitle</span> via ethers.js.
+                    </p>
+                  </div>
+                )}
 
                 <div>
                   <label htmlFor="buyerNotes" className="block text-xs text-[#94A3B8] mb-1">
@@ -1619,7 +1704,8 @@ export default function ExploreLandPage() {
                     <span>
                       {submittingPurchase
                         ? 'Confirming in Wallet…'
-                        : paymentMethod.startsWith('Web3 Wallet')
+                        : paymentMethod.startsWith('Web3 Wallet') ||
+                            paymentMethod === 'LandRegistry On-Chain Title Transfer'
                         ? 'Authorize & Buy Land'
                         : 'Confirm Land Purchase'}
                     </span>

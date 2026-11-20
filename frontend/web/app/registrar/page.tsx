@@ -209,6 +209,8 @@ export default function RegistrarPage() {
                         {app.status === 'in_review' && (
                           <RegistrarActions
                             applicationId={app.id}
+                            parcelRef={app.parcel_ref}
+                            spatialHash={app.spatial_hash}
                             onActionComplete={() => void loadApplications()}
                           />
                         )}
