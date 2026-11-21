@@ -11,6 +11,11 @@ import {
   type DemoAccount,
 } from '@/lib/supabase';
 import {
+  getActiveUserAccount,
+  clearActiveUserAccount,
+  type UserAccount,
+} from '@/lib/user-store';
+import {
   ShieldCheck,
   LogOut,
   Layers,
@@ -31,10 +36,12 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [activeAccount, setActiveAccount] = useState<DemoAccount | null>(null);
+  const [registeredUser, setRegisteredUser] = useState<UserAccount | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     setActiveAccount(getActiveDemoAccount());
+    setRegisteredUser(getActiveUserAccount());
   }, [pathname]);
 
   const handleSwitchAccount = (account: DemoAccount) => {
@@ -47,6 +54,7 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
 
   const handleSignOut = () => {
     clearDemoSession();
+    clearActiveUserAccount();
     router.push('/login');
     router.refresh();
   };
@@ -102,14 +110,14 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
           </Link>
 
           {/* Current role tag */}
-          {activeAccount && (
+          {(activeAccount || registeredUser) && (
             <div
               className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono border ${getRoleBadgeColor(
-                activeAccount.role,
+                activeAccount?.role ?? registeredUser?.role,
               )}`}
             >
               <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
-              <span>{activeAccount.role.toUpperCase()} MODE</span>
+              <span>{(activeAccount?.role ?? registeredUser?.role ?? 'user').toUpperCase()} MODE</span>
             </div>
           )}
         </div>
@@ -144,14 +152,14 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
               className="flex items-center gap-2 bg-[#020305] border border-[#1E293B] hover:border-[#38BDF8]/40 px-3 py-1.5 rounded-lg text-xs transition-colors"
             >
               <div className="h-5 w-5 rounded-full bg-[#1E293B] text-[#38BDF8] flex items-center justify-center font-bold text-[10px]">
-                {activeAccount?.name.charAt(0) ?? 'U'}
+                {(activeAccount?.name ?? registeredUser?.fullName ?? 'U').charAt(0)}
               </div>
               <div className="text-left hidden md:block">
                 <p className="font-medium text-[#F4F7FB] truncate max-w-[140px]">
-                  {activeAccount?.name ?? 'Demo Officer'}
+                  {activeAccount?.name ?? registeredUser?.fullName ?? 'Demo Officer'}
                 </p>
                 <p className="text-[10px] font-mono text-[#64748B] truncate max-w-[140px]">
-                  {activeAccount?.email ?? 'demo@anagu.gov.ng'}
+                  {activeAccount?.email ?? registeredUser?.email ?? 'demo@anagu.gov.ng'}
                 </p>
               </div>
               <ChevronDown className="h-3.5 w-3.5 text-[#64748B]" />
@@ -161,9 +169,20 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
             {menuOpen && (
               <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#0A0F16] border border-[#1E293B] p-2 shadow-2xl z-50">
                 <div className="px-3 py-2 border-b border-[#1E293B]">
-                  <p className="text-xs font-semibold text-[#F4F7FB]">{activeAccount?.name}</p>
-                  <p className="text-[11px] text-[#64748B] font-mono">{activeAccount?.email}</p>
-                  <p className="text-[11px] text-[#38BDF8] mt-1">{activeAccount?.department}</p>
+                  <p className="text-xs font-semibold text-[#F4F7FB]">
+                    {activeAccount?.name ?? registeredUser?.fullName}
+                  </p>
+                  <p className="text-[11px] text-[#64748B] font-mono">
+                    {activeAccount?.email ?? registeredUser?.email}
+                  </p>
+                  <p className="text-[11px] text-[#38BDF8] mt-1">
+                    {activeAccount?.department ??
+                      (registeredUser?.role === 'governor'
+                        ? 'Executive Governor Office'
+                        : registeredUser?.role === 'registrar'
+                          ? 'Deeds Registrar Bureau'
+                          : 'Anagu User Account')}
+                  </p>
                 </div>
 
                 <div className="py-2">

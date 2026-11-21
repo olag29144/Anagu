@@ -6,6 +6,7 @@ import { Navbar } from '@/components/landing/Navbar';
 import { ParcelMiniMap } from '@/components/gis/ParcelMiniMap';
 import { GoogleSignUpButton } from '@/components/auth/GoogleSignUpButton';
 import { ContractRegistryPanel } from '@/components/web3/ContractRegistryPanel';
+import { WalletConnectModal } from '@/components/web3/WalletConnectModal';
 import {
   getLandListings,
   updateLandListing,
@@ -30,16 +31,18 @@ import {
   getLandsForUser,
   getBuyerOrdersForUser,
   getSellerOrdersForUser,
+  getRoleLabel,
+  validateRoleInviteCode,
   type UserAccount,
+  type UserRole,
 } from '@/lib/user-store';
 import {
   subscribeWalletDiscovery,
-  getSnapshotDetectedWallets,
+  discoverAllWallets,
   connectWalletProvider,
-  getMobileWalletDeepLinksForPath,
-  triggerDeviceEthereumWalletIntent,
   isMobileDevice,
   isAndroidDevice,
+  triggerDeviceEthereumWalletIntent,
   formatShortAddress,
   getChainName,
   mapWalletError,
@@ -74,10 +77,9 @@ import {
   Menu,
   Compass,
   Settings,
-  RefreshCw,
   Loader2,
-  ExternalLink,
-  Smartphone,
+  KeyRound,
+  Landmark,
 } from 'lucide-react';
 
 type SidebarSection =
@@ -111,6 +113,8 @@ export default function UserDashboardPage() {
   // Auth form state (when not signed in)
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [signupRole, setSignupRole] = useState<UserRole>('user');
+  const [signupInviteCode, setSignupInviteCode] = useState('');
   const [signupName, setSignupName] = useState('');
   const [signupPhone, setSignupPhone] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
@@ -214,12 +218,14 @@ export default function UserDashboardPage() {
     if (shouldAutoConnect) {
       const current = getActiveUserAccount();
       if (current) {
-        const snapshotWallets = getSnapshotDetectedWallets();
-        if (snapshotWallets.length > 0) {
-          void connectWithWallet(snapshotWallets[0], { targetUser: current });
-        } else {
-          setShowWalletModal(true);
-        }
+        void discoverAllWallets(450).then((wallets) => {
+          setDetectedWallets(wallets);
+          if (wallets.length === 1) {
+            void connectWithWallet(wallets[0], { targetUser: current });
+          } else {
+            setShowWalletModal(true);
+          }
+        });
       }
     }
 
@@ -397,6 +403,18 @@ export default function UserDashboardPage() {
   const handleSignUp = (e: FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+
+    if (signupRole === 'registrar' || signupRole === 'governor') {
+      const check = validateRoleInviteCode(signupInviteCode, signupRole);
+      if (!check.valid) {
+        setAuthError(
+          check.error ||
+            'A valid administrator authorization code is required to register for this role.',
+        );
+        return;
+      }
+    }
+
     if (!signupName.trim()) {
       setAuthError('Please enter your full name or company name.');
       return;
@@ -415,6 +433,8 @@ export default function UserDashboardPage() {
       phone: signupPhone,
       email: signupEmail,
       walletAddress: signupWallet,
+      role: signupRole,
+      inviteCode: signupInviteCode,
     });
 
     if (error || !user) {
@@ -425,6 +445,8 @@ export default function UserDashboardPage() {
     setSignupPhone('');
     setSignupEmail('');
     setSignupWallet('');
+    setSignupInviteCode('');
+    setSignupRole('user');
     loadData();
   };
 
@@ -527,12 +549,11 @@ export default function UserDashboardPage() {
     }
   };
 
-  const handleConnectWalletClick = () => {
+  const handleConnectWalletClick = async () => {
     setWalletError(null);
     setSidebarOpen(false);
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const wallets =
-      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+    const wallets = await discoverAllWallets(300);
+    setDetectedWallets(wallets);
 
     if (!connectedWallet && wallets.length === 1) {
       void connectWithWallet(wallets[0]);
@@ -540,28 +561,6 @@ export default function UserDashboardPage() {
     }
 
     setShowWalletModal(true);
-  };
-
-  const handleRefreshWallets = () => {
-    setWalletError(null);
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const wallets =
-      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
-
-    if (wallets.length > 0) {
-      void connectWithWallet(wallets[0]);
-      return;
-    }
-
-    if (isMobile && isAndroidDevice()) {
-      triggerDeviceEthereumWalletIntent();
-    }
-
-    setWalletError(
-      isMobile
-        ? 'No in-app wallet browser detected. Tap your mobile wallet app below to connect.'
-        : 'No browser Web3 wallet extension detected. Install or unlock MetaMask, Rabby, Coinbase Wallet, Trust Wallet, or Phantom.',
-    );
   };
 
   const handleDisconnectWallet = () => {
@@ -572,26 +571,29 @@ export default function UserDashboardPage() {
 
   const handleConnectSignupWallet = async () => {
     setAuthError(null);
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const wallets =
-      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
-    if (wallets.length === 0) {
-      setAuthError(
-        'No browser Web3 wallet detected. Install or unlock MetaMask/Trust Wallet, or paste your 0x... wallet address.',
-      );
+    setWalletError(null);
+    const wallets = await discoverAllWallets(300);
+    setDetectedWallets(wallets);
+
+    if (wallets.length === 1) {
+      setWalletConnecting(true);
+      try {
+        const connected = await connectWalletProvider(wallets[0]);
+        setConnectedWallet(connected);
+        setActiveProvider(wallets[0]);
+        setSignupWallet(connected.address);
+      } catch (err) {
+        setAuthError(mapWalletError(err));
+      } finally {
+        setWalletConnecting(false);
+      }
       return;
     }
-    setWalletConnecting(true);
-    try {
-      const connected = await connectWalletProvider(wallets[0]);
-      setConnectedWallet(connected);
-      setActiveProvider(wallets[0]);
-      setSignupWallet(connected.address);
-    } catch (err) {
-      setAuthError(mapWalletError(err));
-    } finally {
-      setWalletConnecting(false);
+
+    if (wallets.length === 0 && isMobile && isAndroidDevice()) {
+      triggerDeviceEthereumWalletIntent();
     }
+    setShowWalletModal(true);
   };
 
   if (!mounted) {
@@ -671,11 +673,111 @@ export default function UserDashboardPage() {
                 </div>
               )}
 
+              {authMode === 'signup' && (
+                <div className="space-y-3 rounded-xl bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-[#F4F7FB]">
+                      Select Account Type *
+                    </span>
+                    <span className="text-[11px] font-mono text-[#64748B]">
+                      {getRoleLabel(signupRole)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSignupRole('user');
+                        setSignupInviteCode('');
+                        setAuthError(null);
+                      }}
+                      className={`h-10 px-3 rounded-lg border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                        signupRole === 'user'
+                          ? 'bg-[#38BDF8] text-[#020305] border-[#67E8F9]'
+                          : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
+                      }`}
+                    >
+                      <User className="h-3.5 w-3.5" />
+                      <span>Normal Users</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSignupRole('registrar');
+                        setAuthError(null);
+                      }}
+                      className={`h-10 px-3 rounded-lg border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                        signupRole === 'registrar'
+                          ? 'bg-sky-500/20 text-sky-200 border-sky-400'
+                          : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
+                      }`}
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      <span>Registrar</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSignupRole('governor');
+                        setAuthError(null);
+                      }}
+                      className={`h-10 px-3 rounded-lg border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                        signupRole === 'governor'
+                          ? 'bg-amber-500/20 text-amber-200 border-amber-400'
+                          : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
+                      }`}
+                    >
+                      <Landmark className="h-3.5 w-3.5" />
+                      <span>Governor</span>
+                    </button>
+                  </div>
+
+                  {signupRole === 'user' ? (
+                    <p className="text-[11px] text-[#94A3B8]">
+                      Standard user account for landowners and buyers. No authorization code required.
+                    </p>
+                  ) : (
+                    <div className="pt-1 space-y-1.5">
+                      <label
+                        htmlFor="signup-invite-code"
+                        className="flex items-center gap-1.5 text-xs font-medium text-[#F4F7FB]"
+                      >
+                        <KeyRound className="h-3.5 w-3.5 text-amber-400" />
+                        <span>
+                          {signupRole === 'governor' ? 'Governor' : 'Registrar'} Authorization Code *
+                        </span>
+                      </label>
+                      <input
+                        id="signup-invite-code"
+                        type="text"
+                        required
+                        value={signupInviteCode}
+                        onChange={(e) => setSignupInviteCode(e.target.value.toUpperCase())}
+                        placeholder={
+                          signupRole === 'governor' ? 'e.g. GOV-XXXX-XXXX' : 'e.g. REG-XXXX-XXXX'
+                        }
+                        className="w-full h-10 px-3 rounded-[8px] bg-[#0A0F16] border border-amber-500/40 text-sm font-mono uppercase tracking-wider text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                      />
+                      <p className="text-[11px] text-amber-300/90">
+                        Single-use code: valid for 1 {signupRole === 'governor' ? 'Governor' : 'Registrar'} account only and expires immediately after registration.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-4">
                 <GoogleSignUpButton
                   label={authMode === 'signup' ? 'Sign up with Google' : 'Continue with Google'}
+                  role={authMode === 'signup' ? signupRole : 'user'}
+                  inviteCode={authMode === 'signup' ? signupInviteCode : ''}
                   onSuccess={() => {
                     setAuthError(null);
+                    setSignupInviteCode('');
+                    setSignupRole('user');
                     loadData();
                   }}
                   onError={(msg) => setAuthError(msg)}
@@ -704,6 +806,9 @@ export default function UserDashboardPage() {
                       placeholder="e.g. estates@adelekeholdings.ng or +234 803 412 8890"
                       className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                     />
+                    <p className="mt-1.5 text-[11px] text-[#64748B]">
+                      Existing Normal Users, Registrars, and Governors sign in directly — authorization codes are only required once when creating an official account.
+                    </p>
                   </div>
                   <button
                     type="submit"
@@ -789,7 +894,7 @@ export default function UserDashboardPage() {
                     type="submit"
                     className="w-full h-11 rounded-[8px] bg-[#38BDF8] hover:bg-[#67E8F9] text-[#020305] text-sm font-semibold transition-colors"
                   >
-                    Create Account &amp; Continue
+                    Create {getRoleLabel(signupRole)} Account &amp; Continue
                   </button>
                 </form>
               )}
@@ -823,6 +928,26 @@ export default function UserDashboardPage() {
             </div>
           </div>
         </main>
+
+        <WalletConnectModal
+          open={showWalletModal}
+          onClose={() => setShowWalletModal(false)}
+          detectedWallets={detectedWallets}
+          connectedWallet={connectedWallet}
+          connecting={walletConnecting}
+          error={walletError}
+          deepLinkPath="/dashboard?mode=signup"
+          onSelectWallet={async (wallet) => {
+            const connected = await connectWithWallet(wallet, {
+              targetUser: null,
+              closeOnSuccess: true,
+            });
+            if (connected) {
+              setSignupWallet(connected.address);
+            }
+          }}
+          onDisconnect={handleDisconnectWallet}
+        />
       </div>
     );
   }
@@ -1029,6 +1154,26 @@ export default function UserDashboardPage() {
               </span>
             </span>
           </button>
+          {activeUser.role === 'registrar' && (
+            <Link
+              href="/registrar"
+              onClick={() => setSidebarOpen(false)}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-sky-500/15 border border-sky-400/40 text-sky-200 hover:bg-sky-500/25 text-xs font-semibold transition-colors whitespace-nowrap"
+            >
+              <ShieldCheck className="h-4 w-4 shrink-0 text-sky-400" />
+              <span>Registrar Portal</span>
+            </Link>
+          )}
+          {activeUser.role === 'governor' && (
+            <Link
+              href="/governor"
+              onClick={() => setSidebarOpen(false)}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-amber-500/15 border border-amber-400/40 text-amber-200 hover:bg-amber-500/25 text-xs font-semibold transition-colors whitespace-nowrap"
+            >
+              <Landmark className="h-4 w-4 shrink-0 text-amber-400" />
+              <span>Governor Portal</span>
+            </Link>
+          )}
           <button
             type="button"
             onClick={() => selectSidebarView('profile')}
@@ -1051,9 +1196,22 @@ export default function UserDashboardPage() {
             <User className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-[#F4F7FB] truncate">
-              {activeUser.fullName}
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-semibold text-[#F4F7FB] truncate">
+                {activeUser.fullName}
+              </p>
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border shrink-0 ${
+                  activeUser.role === 'governor'
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/35'
+                    : activeUser.role === 'registrar'
+                      ? 'bg-sky-500/15 text-sky-300 border-sky-500/35'
+                      : 'bg-slate-800 text-slate-300 border-slate-700'
+                }`}
+              >
+                {getRoleLabel(activeUser.role)}
+              </span>
+            </div>
             <p className="text-[11px] text-[#64748B] truncate">
               {activeUser.email !== 'Not provided' ? activeUser.email : activeUser.phone}
             </p>
@@ -2113,193 +2271,17 @@ export default function UserDashboardPage() {
       )}
 
       {/* Connect Web3 Wallet Modal */}
-      {showWalletModal && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Connect Web3 Wallet"
-        >
-          <div className="w-full max-w-md rounded-xl bg-[#0A0F16] border border-[rgba(91,133,167,0.32)] p-6 space-y-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-[rgba(91,133,167,0.18)] pb-3.5">
-              <div>
-                <h3 className="text-base font-bold text-[#F4F7FB] flex items-center gap-2">
-                  <Wallet className="h-4 w-4 text-[#38BDF8]" />
-                  <span>{connectedWallet ? 'Connected Web3 Wallet' : 'Connect Your Wallet'}</span>
-                </h3>
-                <p className="text-xs text-[#94A3B8] mt-0.5">
-                  {connectedWallet
-                    ? 'Your wallet address is linked to your Anagu landowner profile.'
-                    : 'Choose a detected wallet extension or open in a mobile wallet app.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowWalletModal(false)}
-                className="p-1.5 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-white"
-                aria-label="Close wallet modal"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {walletError && (
-              <div
-                role="alert"
-                className="rounded-lg bg-amber-950/30 border border-amber-500/35 px-3.5 py-2.5 text-xs text-amber-300"
-              >
-                {walletError}
-              </div>
-            )}
-
-            {connectedWallet && (
-              <div className="rounded-lg bg-[#05080D] border border-emerald-500/35 p-4 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    {connectedWallet.walletIcon ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={connectedWallet.walletIcon}
-                        alt={connectedWallet.walletName}
-                        className="h-7 w-7 rounded-md shrink-0"
-                      />
-                    ) : (
-                      <div className="h-7 w-7 rounded-md bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0">
-                        <ShieldCheck className="h-4 w-4" />
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-[#F4F7FB] truncate">
-                        {connectedWallet.walletName}
-                      </p>
-                      <p className="text-[11px] font-mono text-[#67E8F9] truncate">
-                        {connectedWallet.address}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-[11px] font-mono text-emerald-400 shrink-0">
-                    Connected
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between text-xs pt-2 border-t border-[rgba(91,133,167,0.16)] text-[#94A3B8]">
-                  <span>{connectedWallet.chainName}</span>
-                  <span className="font-mono tabular-nums text-[#F4F7FB]">
-                    {connectedWallet.balanceEth} ETH
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    disabled={walletConnecting}
-                    onClick={() => activeProvider && void connectWithWallet(activeProvider)}
-                    className="flex-1 h-9 rounded-lg bg-[#0A0F16] border border-[rgba(91,133,167,0.28)] hover:border-[#38BDF8] text-xs font-medium text-[#E2E8F0]"
-                  >
-                    Refresh Account
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDisconnectWallet}
-                    className="flex-1 h-9 rounded-lg bg-[#0A0F16] border border-rose-500/35 hover:border-rose-400 text-xs font-medium text-rose-300"
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Detected Browser Wallets */}
-            {detectedWallets.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-[11px] font-mono uppercase tracking-wider text-[#64748B]">
-                  Detected Browser Wallets ({detectedWallets.length})
-                </p>
-                <div className="space-y-2">
-                  {detectedWallets.map((wallet) => {
-                    const isCurrent = connectedWallet?.walletId === wallet.id;
-                    return (
-                      <button
-                        key={wallet.id}
-                        type="button"
-                        disabled={walletConnecting}
-                        onClick={() => void connectWithWallet(wallet)}
-                        className={`w-full h-11 px-3.5 rounded-lg border text-xs font-medium flex items-center justify-between gap-3 transition-colors ${
-                          isCurrent
-                            ? 'bg-[#38BDF8]/15 border-[#38BDF8] text-[#67E8F9]'
-                            : 'bg-[#05080D] border-[rgba(91,133,167,0.24)] text-[#F4F7FB] hover:border-[#38BDF8]'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2.5 min-w-0">
-                          {wallet.icon ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={wallet.icon} alt="" className="h-5 w-5 rounded-sm shrink-0" />
-                          ) : (
-                            <Wallet className="h-4 w-4 text-[#38BDF8] shrink-0" />
-                          )}
-                          <span className="truncate">{wallet.name}</span>
-                        </span>
-                        <span className="text-[11px] font-mono text-[#38BDF8] shrink-0">
-                          {walletConnecting ? 'Connecting…' : isCurrent ? 'Active' : 'Connect'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Detect / Re-scan Button */}
-            <button
-              type="button"
-              disabled={walletConnecting}
-              onClick={handleRefreshWallets}
-              className="w-full h-10 rounded-lg bg-[#38BDF8] hover:bg-[#67E8F9] text-[#020305] text-xs font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60 transition-colors"
-            >
-              {walletConnecting ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              <span>
-                {detectedWallets.length > 0
-                  ? 'Re-scan Browser Wallets'
-                  : 'Detect & Connect Browser Wallet'}
-              </span>
-            </button>
-
-            {/* Mobile Wallet Deep Links */}
-            <div className="pt-3 border-t border-[rgba(91,133,167,0.16)] space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-mono uppercase tracking-wider text-[#94A3B8] inline-flex items-center gap-1.5">
-                  <Smartphone className="h-3.5 w-3.5 text-[#38BDF8]" />
-                  <span>Mobile Wallet Apps</span>
-                </p>
-                <button
-                  type="button"
-                  onClick={triggerDeviceEthereumWalletIntent}
-                  className="text-[11px] font-mono text-[#38BDF8] hover:underline inline-flex items-center gap-1"
-                >
-                  <span>Open Default App</span>
-                  <ExternalLink className="h-3 w-3" />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {getMobileWalletDeepLinksForPath('/dashboard?connectWallet=1').map((wallet) => (
-                  <a
-                    key={wallet.id}
-                    href={wallet.href}
-                    className={`px-3 py-2 rounded-lg bg-[#05080D] border text-xs font-medium flex items-center justify-between gap-1.5 transition-colors ${wallet.accentClass}`}
-                  >
-                    <span className="truncate">{wallet.name}</span>
-                    <ExternalLink className="h-3 w-3 shrink-0 opacity-80" />
-                  </a>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <WalletConnectModal
+        open={showWalletModal}
+        onClose={() => setShowWalletModal(false)}
+        detectedWallets={detectedWallets}
+        connectedWallet={connectedWallet}
+        connecting={walletConnecting}
+        error={walletError}
+        deepLinkPath="/dashboard?connectWallet=1"
+        onSelectWallet={(wallet) => connectWithWallet(wallet)}
+        onDisconnect={handleDisconnectWallet}
+      />
     </div>
   );
 }

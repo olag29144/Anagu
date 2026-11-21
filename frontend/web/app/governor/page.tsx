@@ -1,12 +1,16 @@
 'use client';
 
 import { useState, useEffect, FormEvent } from 'react';
+import Link from 'next/link';
 import { apiCall } from '@/lib/api';
+import { getActiveDemoAccount } from '@/lib/supabase';
+import { getActiveUserAccount } from '@/lib/user-store';
 import { StatusBadge } from '@/components/status-badge';
 import { PortalHeader } from '@/components/portal-header';
+import { WalletConnectModal } from '@/components/web3/WalletConnectModal';
 import {
   subscribeWalletDiscovery,
-  getSnapshotDetectedWallets,
+  discoverAllWallets,
   connectWalletProvider,
   formatShortAddress,
   type DetectedWalletProvider,
@@ -20,7 +24,7 @@ import {
   ContractRevocationGround,
   LAND_TITLE_NFT_ADDRESS,
 } from '@/lib/contracts';
-import { Landmark, AlertTriangle, ShieldAlert, Sparkles, Wallet } from 'lucide-react';
+import { Landmark, AlertTriangle, ShieldAlert, Sparkles, Wallet, Lock } from 'lucide-react';
 
 type RevocationGround = 'OverridingPublicInterest' | 'BreachOfStatutoryCondition';
 
@@ -57,33 +61,60 @@ export default function GovernorPage() {
   const [activeProvider, setActiveProvider] = useState<DetectedWalletProvider | null>(null);
   const [connectedWallet, setConnectedWallet] = useState<ConnectedWalletState | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [walletModalError, setWalletModalError] = useState<string | null>(null);
+  const [authorizedGovernor, setAuthorizedGovernor] = useState<boolean | null>(null);
 
   useEffect(() => {
+    const checkAuth = () => {
+      const activeUser = getActiveUserAccount();
+      const demoAcc = getActiveDemoAccount();
+      const allowed =
+        activeUser?.role === 'governor' || demoAcc?.role === 'governor';
+      setAuthorizedGovernor(allowed);
+    };
+    checkAuth();
+    window.addEventListener('anagu-user-changed', checkAuth);
+    window.addEventListener('storage', checkAuth);
+
     const unsubscribe = subscribeWalletDiscovery((wallets) => {
       setDetectedWallets(wallets);
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      window.removeEventListener('anagu-user-changed', checkAuth);
+      window.removeEventListener('storage', checkAuth);
+    };
   }, []);
 
-  async function handleConnectGovernorWallet() {
+  async function connectGovernorProvider(wallet: DetectedWalletProvider) {
+    setWalletModalError(null);
     setError(null);
     setWalletConnecting(true);
     try {
-      const wallets =
-        detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
-      if (wallets.length === 0) {
-        setError('No Web3 wallet detected. Connect MetaMask or a Governor-authorized wallet to revoke directly on-chain, or submit via the Registry API.');
-        return;
-      }
-      const target = wallets[0];
-      setActiveProvider(target);
-      const connected = await connectWalletProvider(target);
+      setActiveProvider(wallet);
+      const connected = await connectWalletProvider(wallet);
       setConnectedWallet(connected);
+      setShowWalletModal(false);
     } catch (err) {
-      setError(formatContractError(err));
+      const msg = formatContractError(err);
+      setWalletModalError(msg);
+      setError(msg);
     } finally {
       setWalletConnecting(false);
     }
+  }
+
+  async function handleConnectGovernorWallet() {
+    setError(null);
+    setWalletModalError(null);
+    const wallets = await discoverAllWallets(300);
+    setDetectedWallets(wallets);
+    if (!connectedWallet && wallets.length === 1) {
+      await connectGovernorProvider(wallets[0]);
+      return;
+    }
+    setShowWalletModal(true);
   }
 
   // Fetch recent revocation audit entries on mount
@@ -205,6 +236,28 @@ export default function GovernorPage() {
           </button>
         </div>
 
+        {authorizedGovernor === null ? (
+          <div className="flex justify-center py-16">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#38BDF8] border-t-transparent" />
+          </div>
+        ) : authorizedGovernor === false ? (
+          <div className="rounded-xl bg-[#0A0F16] p-10 text-center border border-rose-500/40 space-y-4">
+            <div className="mx-auto h-11 w-11 rounded-full bg-rose-500/15 border border-rose-500/40 flex items-center justify-center text-rose-400">
+              <Lock className="h-5 w-5" />
+            </div>
+            <h2 className="text-base font-bold text-[#F4F7FB]">Governor Authorization Required</h2>
+            <p className="text-xs text-[#94A3B8] max-w-md mx-auto">
+              Normal user accounts cannot access Governor revocation controls. Register an account as a Governor using an administrator-generated authorization code.
+            </p>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center px-4 py-2 rounded-lg bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9]"
+            >
+              Return to My Dashboard
+            </Link>
+          </div>
+        ) : (
+        <>
         {/* Revocation form */}
         <div className="mb-10 rounded-xl bg-[#0A0F16] p-6 sm:p-8 border border-[#1E293B] shadow-xl">
           <div className="flex items-center justify-between pb-4 mb-6 border-b border-[#1E293B]">
@@ -372,7 +425,26 @@ export default function GovernorPage() {
             </div>
           )}
         </section>
+        </>
+        )}
       </main>
+
+      <WalletConnectModal
+        open={showWalletModal}
+        onClose={() => setShowWalletModal(false)}
+        detectedWallets={detectedWallets}
+        connectedWallet={connectedWallet}
+        connecting={walletConnecting}
+        error={walletModalError}
+        deepLinkPath="/governor"
+        title="Connect Governor Wallet"
+        onSelectWallet={(wallet) => connectGovernorProvider(wallet)}
+        onDisconnect={() => {
+          setActiveProvider(null);
+          setConnectedWallet(null);
+          setWalletModalError(null);
+        }}
+      />
     </div>
   );
 }

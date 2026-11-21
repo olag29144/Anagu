@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase';
+import { createClient, getActiveDemoAccount, getStoredApplications } from '@/lib/supabase';
+import { getActiveUserAccount } from '@/lib/user-store';
 import { StatusBadge } from '@/components/status-badge';
 import { PortalHeader } from '@/components/portal-header';
 import { RegistrarActions } from './registrar-actions';
-import { ShieldCheck, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, Clock, AlertTriangle, Lock } from 'lucide-react';
 
 interface Application {
   id: string;
@@ -30,15 +31,36 @@ export default function RegistrarPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   async function loadApplications() {
+    const activeUser = getActiveUserAccount();
+    const demoAcc = getActiveDemoAccount();
+    const isCodeRegistrar = activeUser?.role === 'registrar';
+    const isDemoRegistrar = demoAcc?.role === 'registrar';
+
     const supabase = createClient();
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
-    if (!session) {
-      router.replace('/login');
+    if (!session && !isCodeRegistrar) {
+      router.replace('/dashboard?mode=signup');
+      return;
+    }
+
+    if (activeUser && activeUser.role !== 'registrar' && !isDemoRegistrar) {
+      setAccessDenied(true);
+      setLoading(false);
+      return;
+    }
+
+    if (isCodeRegistrar && !session) {
+      const localApps = getStoredApplications().filter((a) =>
+        ['pending', 'legal_pending', 'in_review'].includes(a.status),
+      );
+      setApplications(localApps as unknown as Application[]);
+      setLoading(false);
       return;
     }
 
@@ -95,13 +117,31 @@ export default function RegistrarPage() {
           </div>
         )}
 
-        {!loading && applications.length === 0 && !fetchError && (
+        {accessDenied && (
+          <div className="rounded-xl bg-[#0A0F16] p-10 text-center border border-rose-500/40 space-y-4">
+            <div className="mx-auto h-11 w-11 rounded-full bg-rose-500/15 border border-rose-500/40 flex items-center justify-center text-rose-400">
+              <Lock className="h-5 w-5" />
+            </div>
+            <h2 className="text-base font-bold text-[#F4F7FB]">Registrar Authorization Required</h2>
+            <p className="text-xs text-[#94A3B8] max-w-md mx-auto">
+              Only accounts registered as a Registrar with an administrator-generated code can access the Registrar Adjudication Queue.
+            </p>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center px-4 py-2 rounded-lg bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9]"
+            >
+              Return to My Dashboard
+            </Link>
+          </div>
+        )}
+
+        {!loading && !accessDenied && applications.length === 0 && !fetchError && (
           <div className="rounded-xl bg-[#0A0F16] p-12 text-center border border-[#1E293B]">
             <p className="text-sm text-[#94A3B8]">No applications pending registrar review at this time.</p>
           </div>
         )}
 
-        {!loading && applications.length > 0 && (
+        {!loading && !accessDenied && applications.length > 0 && (
           <div className="overflow-hidden rounded-xl bg-[#0A0F16] border border-[#1E293B] shadow-xl">
             <table className="min-w-full divide-y divide-[#1E293B]">
               <thead className="bg-[#05080D]">

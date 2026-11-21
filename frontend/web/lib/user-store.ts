@@ -6,11 +6,30 @@ import {
   type LandPurchaseOrder,
 } from './land-store';
 
+export type UserRole = 'user' | 'registrar' | 'governor';
+
+export type InviteCodeRole = 'registrar' | 'governor';
+
+export interface RoleInviteCode {
+  id: string;
+  code: string;
+  role: InviteCodeRole;
+  recipientNote?: string;
+  status: 'active' | 'used' | 'revoked';
+  createdAt: string;
+  usedAt?: string;
+  usedByUserId?: string;
+  usedByName?: string;
+  usedByEmail?: string;
+}
+
 export interface UserAccount {
   id: string;
   fullName: string;
   email: string;
   phone: string;
+  role: UserRole;
+  inviteCodeUsed?: string;
   walletAddress?: string;
   authProvider?: 'local' | 'google';
   googleId?: string;
@@ -39,6 +58,7 @@ export interface UserAccountWithStats {
 
 const USERS_STORAGE_KEY = 'anagu_user_accounts_v1';
 const ACTIVE_USER_ID_KEY = 'anagu_active_user_id_v1';
+const ROLE_CODES_STORAGE_KEY = 'anagu_role_invite_codes_v1';
 
 export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
   {
@@ -46,6 +66,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Adeleke Holdings Ltd',
     email: 'estates@adelekeholdings.ng',
     phone: '+234 803 412 8890',
+    role: 'user',
     walletAddress: '0x71C83812a19f20108A456789b910123456789012',
     status: 'active',
     createdAt: '2026-10-01T08:00:00.000Z',
@@ -56,6 +77,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Bello & Sons Capital',
     email: 'acquisitions@bellocapital.ng',
     phone: '+234 809 772 1904',
+    role: 'user',
     status: 'active',
     createdAt: '2026-10-05T10:00:00.000Z',
     lastActiveAt: '2026-10-08T11:20:00.000Z',
@@ -65,6 +87,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Vanguard Commercial Properties',
     email: 'deals@vanguardprop.ng',
     phone: '+234 802 904 3311',
+    role: 'user',
     status: 'active',
     createdAt: '2026-10-10T09:30:00.000Z',
     lastActiveAt: '2026-10-14T16:10:00.000Z',
@@ -74,6 +97,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Ogun Agro-Allied Ventures',
     email: 'lands@ogunagro.ng',
     phone: '+234 814 550 7219',
+    role: 'user',
     status: 'active',
     createdAt: '2026-10-15T12:00:00.000Z',
     lastActiveAt: '2026-10-19T13:40:00.000Z',
@@ -83,6 +107,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Crestline Sovereign Estates',
     email: 'sales@crestlineestates.ng',
     phone: '+234 805 112 6400',
+    role: 'user',
     status: 'active',
     createdAt: '2026-10-20T09:00:00.000Z',
     lastActiveAt: '2026-10-25T10:05:00.000Z',
@@ -92,6 +117,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Abuja Urban Developments',
     email: 'office@abujadevelopments.ng',
     phone: '+234 807 620 4188',
+    role: 'user',
     status: 'active',
     createdAt: '2026-10-22T14:00:00.000Z',
     lastActiveAt: '2026-10-28T08:50:00.000Z',
@@ -101,6 +127,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Delta Horizon Realty',
     email: 'registry@deltahorizon.ng',
     phone: '+234 803 884 2201',
+    role: 'user',
     status: 'active',
     createdAt: '2026-10-26T11:00:00.000Z',
     lastActiveAt: '2026-11-12T15:20:00.000Z',
@@ -110,6 +137,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Oyo Inland Corridor Partners',
     email: 'info@oyocorridor.ng',
     phone: '+234 812 339 9045',
+    role: 'user',
     status: 'active',
     createdAt: '2026-11-01T08:30:00.000Z',
     lastActiveAt: '2026-11-05T09:30:00.000Z',
@@ -119,6 +147,7 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     fullName: 'Dr. Chinedu Okafor',
     email: 'c.okafor@medconsult.ng',
     phone: '+234 806 551 0912',
+    role: 'user',
     status: 'active',
     createdAt: '2026-11-11T10:00:00.000Z',
     lastActiveAt: '2026-11-12T15:20:00.000Z',
@@ -135,6 +164,21 @@ function normalizeEmail(email: string): string {
   return clean;
 }
 
+function normalizeUserRecord(raw: Partial<UserAccount>): UserAccount {
+  const role: UserRole =
+    raw.role === 'registrar' || raw.role === 'governor' ? raw.role : 'user';
+  return {
+    ...(raw as UserAccount),
+    role,
+  };
+}
+
+export function getRoleLabel(role?: UserRole): string {
+  if (role === 'registrar') return 'Registrar';
+  if (role === 'governor') return 'Governor';
+  return 'Normal User';
+}
+
 export function getUserAccounts(): UserAccount[] {
   if (typeof window === 'undefined') return INITIAL_USER_ACCOUNTS;
   try {
@@ -145,7 +189,7 @@ export function getUserAccounts(): UserAccount[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed as UserAccount[];
+      return (parsed as Partial<UserAccount>[]).map(normalizeUserRecord);
     }
     return INITIAL_USER_ACCOUNTS;
   } catch {
@@ -241,12 +285,183 @@ export function signInUser(identifier: string): {
   return { user: active, error: null };
 }
 
+// ============================================================================
+// Admin-Generated Role Invite / Authorization Codes (Registrar & Governor)
+// ============================================================================
+
+export function getRoleInviteCodes(): RoleInviteCode[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(ROLE_CODES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as RoleInviteCode[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveRoleInviteCodes(codes: RoleInviteCode[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(ROLE_CODES_STORAGE_KEY, JSON.stringify(codes));
+    window.dispatchEvent(new Event('anagu-codes-changed'));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function createRandomCodeSegment(length: number): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(length);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  let out = '';
+  for (let i = 0; i < length; i += 1) {
+    out += alphabet[bytes[i] % alphabet.length];
+  }
+  return out;
+}
+
+export function generateRoleInviteCode(
+  role: InviteCodeRole,
+  recipientNote?: string,
+): RoleInviteCode {
+  const prefix = role === 'governor' ? 'GOV' : 'REG';
+  const existing = getRoleInviteCodes();
+  const existingSet = new Set(existing.map((c) => c.code.toUpperCase()));
+
+  let code = '';
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = `${prefix}-${createRandomCodeSegment(4)}-${createRandomCodeSegment(4)}`;
+    if (!existingSet.has(candidate)) {
+      code = candidate;
+      break;
+    }
+  }
+  if (!code) {
+    code = `${prefix}-${Date.now().toString(36).toUpperCase().slice(-8)}`;
+  }
+
+  const created: RoleInviteCode = {
+    id: `CODE-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+    code,
+    role,
+    recipientNote: recipientNote?.trim() || undefined,
+    status: 'active',
+    createdAt: new Date().toISOString(),
+  };
+
+  saveRoleInviteCodes([created, ...existing]);
+  return created;
+}
+
+export function revokeRoleInviteCode(codeId: string): RoleInviteCode[] {
+  const next = getRoleInviteCodes().map((c) =>
+    c.id === codeId && c.status === 'active' ? { ...c, status: 'revoked' as const } : c,
+  );
+  saveRoleInviteCodes(next);
+  return next;
+}
+
+export function deleteRoleInviteCode(codeId: string): RoleInviteCode[] {
+  const next = getRoleInviteCodes().filter((c) => c.id !== codeId);
+  saveRoleInviteCodes(next);
+  return next;
+}
+
+export function validateRoleInviteCode(
+  rawCode: string,
+  expectedRole: InviteCodeRole,
+): { valid: boolean; invite?: RoleInviteCode; error?: string } {
+  const normalized = rawCode.trim().toUpperCase();
+  const roleLabel = expectedRole === 'governor' ? 'Governor' : 'Registrar';
+
+  if (!normalized) {
+    return {
+      valid: false,
+      error: `An administrator authorization code is required to register as a ${roleLabel}.`,
+    };
+  }
+
+  const codes = getRoleInviteCodes();
+  const matched = codes.find((c) => c.code.trim().toUpperCase() === normalized);
+
+  if (!matched) {
+    return {
+      valid: false,
+      error: `Invalid ${roleLabel} authorization code. Ask an administrator to generate one in the Admin Console.`,
+    };
+  }
+
+  if (matched.status === 'used') {
+    return {
+      valid: false,
+      error:
+        'This authorization code has expired because it was already used to register an account. Each code works for one account only and cannot be reused.',
+    };
+  }
+
+  if (matched.status === 'revoked') {
+    return {
+      valid: false,
+      error: 'This authorization code has been revoked by an administrator.',
+    };
+  }
+
+  if (matched.role !== expectedRole) {
+    const actualLabel = matched.role === 'governor' ? 'Governor' : 'Registrar';
+    return {
+      valid: false,
+      error: `This code is only valid for ${actualLabel} registration, not ${roleLabel}.`,
+    };
+  }
+
+  return { valid: true, invite: matched };
+}
+
+function consumeRoleInviteCode(codeId: string, user: UserAccount): void {
+  const now = new Date().toISOString();
+  const next = getRoleInviteCodes().map((c) =>
+    c.id === codeId && c.status === 'active'
+      ? {
+          ...c,
+          status: 'used' as const,
+          usedAt: now,
+          usedByUserId: user.id,
+          usedByName: user.fullName,
+          usedByEmail: user.email,
+        }
+      : c,
+  );
+  saveRoleInviteCodes(next);
+}
+
 export function createUserAccount(input: {
   fullName: string;
   phone: string;
   email?: string;
   walletAddress?: string;
+  role?: UserRole;
+  inviteCode?: string;
 }): { user: UserAccount | null; error: string | null } {
+  const requestedRole: UserRole =
+    input.role === 'registrar' || input.role === 'governor' ? input.role : 'user';
+
+  let verifiedInvite: RoleInviteCode | undefined;
+  if (requestedRole === 'registrar' || requestedRole === 'governor') {
+    const check = validateRoleInviteCode(input.inviteCode ?? '', requestedRole);
+    if (!check.valid || !check.invite) {
+      return { user: null, error: check.error || 'Valid authorization code required.' };
+    }
+    verifiedInvite = check.invite;
+  }
+
   const accounts = getUserAccounts();
   const cleanEmail = normalizeEmail(input.email ?? '');
   const cleanPhone = normalizePhone(input.phone);
@@ -264,6 +479,13 @@ export function createUserAccount(input: {
         error: 'An account with these details is currently suspended.',
       };
     }
+    if (requestedRole !== 'user') {
+      return {
+        user: null,
+        error:
+          'An account with this email or phone number already exists. Use Sign In to access your existing account — single-use codes only apply to creating a new account.',
+      };
+    }
     const active = setActiveUserAccount(duplicate.id);
     return { user: active, error: null };
   }
@@ -274,6 +496,8 @@ export function createUserAccount(input: {
     fullName: input.fullName.trim(),
     email: cleanEmail || 'Not provided',
     phone: input.phone.trim(),
+    role: requestedRole,
+    inviteCodeUsed: verifiedInvite?.code,
     walletAddress: input.walletAddress?.trim() || undefined,
     status: 'active',
     createdAt: now,
@@ -281,6 +505,9 @@ export function createUserAccount(input: {
   };
 
   saveUserAccounts([newUser, ...accounts]);
+  if (verifiedInvite) {
+    consumeRoleInviteCode(verifiedInvite.id, newUser);
+  }
   setActiveUserAccount(newUser.id);
   return { user: newUser, error: null };
 }
@@ -290,7 +517,21 @@ export function signUpOrSignInWithGoogle(input: {
   email: string;
   googleId?: string;
   avatarUrl?: string;
+  role?: UserRole;
+  inviteCode?: string;
 }): { user: UserAccount | null; error: string | null } {
+  const requestedRole: UserRole =
+    input.role === 'registrar' || input.role === 'governor' ? input.role : 'user';
+
+  let verifiedInvite: RoleInviteCode | undefined;
+  if (requestedRole === 'registrar' || requestedRole === 'governor') {
+    const check = validateRoleInviteCode(input.inviteCode ?? '', requestedRole);
+    if (!check.valid || !check.invite) {
+      return { user: null, error: check.error || 'Valid authorization code required.' };
+    }
+    verifiedInvite = check.invite;
+  }
+
   const accounts = getUserAccounts();
   const cleanEmail = normalizeEmail(input.email);
   const now = new Date().toISOString();
@@ -308,18 +549,25 @@ export function signUpOrSignInWithGoogle(input: {
         error: 'This user account has been suspended by the registry administration.',
       };
     }
-    const updated = accounts.map((u) =>
-      u.id === existing.id
-        ? {
-            ...u,
-            fullName: u.fullName || input.fullName.trim(),
-            authProvider: 'google' as const,
-            googleId: input.googleId ?? u.googleId,
-            avatarUrl: input.avatarUrl ?? u.avatarUrl,
-            lastActiveAt: now,
-          }
-        : u,
-    );
+    if (requestedRole === 'registrar' || requestedRole === 'governor') {
+      return {
+        user: null,
+        error:
+          'An account with this Google email already exists. Sign in normally without a code, or use a different Google email to create a new official account.',
+      };
+    }
+
+    const updated = accounts.map((u) => {
+      if (u.id !== existing.id) return u;
+      return {
+        ...u,
+        fullName: u.fullName || input.fullName.trim(),
+        authProvider: 'google' as const,
+        googleId: input.googleId ?? u.googleId,
+        avatarUrl: input.avatarUrl ?? u.avatarUrl,
+        lastActiveAt: now,
+      };
+    });
     saveUserAccounts(updated);
     const active = setActiveUserAccount(existing.id);
     return { user: active, error: null };
@@ -330,6 +578,8 @@ export function signUpOrSignInWithGoogle(input: {
     fullName: input.fullName.trim() || cleanEmail || 'Google User',
     email: cleanEmail,
     phone: 'Not provided',
+    role: requestedRole,
+    inviteCodeUsed: verifiedInvite?.code,
     authProvider: 'google',
     googleId: input.googleId,
     avatarUrl: input.avatarUrl,
@@ -339,6 +589,9 @@ export function signUpOrSignInWithGoogle(input: {
   };
 
   saveUserAccounts([created, ...accounts]);
+  if (verifiedInvite) {
+    consumeRoleInviteCode(verifiedInvite.id, created);
+  }
   setActiveUserAccount(created.id);
   return { user: created, error: null };
 }
@@ -375,6 +628,7 @@ export function ensureUserAccountForRegistration(input: {
     fullName: input.fullName.trim(),
     email: cleanEmail || 'Not provided',
     phone: input.phone.trim(),
+    role: 'user',
     walletAddress: input.walletAddress?.trim() || undefined,
     status: 'active',
     createdAt: now,
@@ -489,6 +743,7 @@ export function getUserAccountsWithStats(): UserAccountWithStats[] {
         fullName: land.ownerName,
         email: land.ownerEmail,
         phone: land.ownerPhone,
+        role: 'user',
         walletAddress: land.ownerWalletAddress,
         status: 'active',
         createdAt: land.createdAt,

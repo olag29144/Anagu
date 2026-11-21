@@ -26,11 +26,15 @@ import {
   signInUser,
   createUserAccount,
   updateUserProfile,
+  getRoleLabel,
+  validateRoleInviteCode,
   type UserAccount,
+  type UserRole,
 } from '@/lib/user-store';
 import { GoogleSignUpButton } from '@/components/auth/GoogleSignUpButton';
 import {
   subscribeWalletDiscovery,
+  discoverAllWallets,
   getSnapshotDetectedWallets,
   connectWalletProvider,
   signLandPurchaseAuthorization,
@@ -68,6 +72,8 @@ import {
   ShieldCheck,
   User,
   Lock,
+  KeyRound,
+  Landmark,
 } from 'lucide-react';
 
 const CATEGORIES: Array<'All' | LandCategory> = [
@@ -113,6 +119,8 @@ export default function ExploreLandPage() {
   const [activeUser, setActiveUser] = useState<UserAccount | null>(null);
   const [buyAuthMode, setBuyAuthMode] = useState<'signin' | 'signup'>('signin');
   const [gateIdentifier, setGateIdentifier] = useState('');
+  const [gateRole, setGateRole] = useState<UserRole>('user');
+  const [gateInviteCode, setGateInviteCode] = useState('');
   const [gateName, setGateName] = useState('');
   const [gatePhone, setGatePhone] = useState('');
   const [gateEmail, setGateEmail] = useState('');
@@ -161,17 +169,24 @@ export default function ExploreLandPage() {
     }
   };
 
-  const triggerWalletDiscoveryAndConnect = () => {
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const availableWallets =
-      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+  const triggerWalletDiscoveryAndConnect = async () => {
+    const availableWallets = await discoverAllWallets(350);
+    setDetectedWallets(availableWallets);
 
-    if (availableWallets.length > 0) {
+    if (availableWallets.length === 1) {
       setShowMobileLinks(false);
-      const targetWallet = activeProvider
-        ? availableWallets.find((w) => w.id === activeProvider.id) ?? availableWallets[0]
-        : availableWallets[0];
-      void connectWithWallet(targetWallet);
+      void connectWithWallet(availableWallets[0]);
+      return;
+    }
+
+    if (availableWallets.length > 1) {
+      setShowMobileLinks(false);
+      if (activeProvider) {
+        const matched = availableWallets.find((w) => w.id === activeProvider.id);
+        if (matched) {
+          void connectWithWallet(matched);
+        }
+      }
       return;
     }
 
@@ -216,10 +231,12 @@ export default function ExploreLandPage() {
           setBuyParcel(matched);
           const current = getActiveUserAccount();
           if (current) {
-            const snapshotWallets = getSnapshotDetectedWallets();
-            if (snapshotWallets.length > 0) {
-              void connectWithWallet(snapshotWallets[0]);
-            }
+            void discoverAllWallets(450).then((wallets) => {
+              setDetectedWallets(wallets);
+              if (wallets.length > 0) {
+                void connectWithWallet(wallets[0]);
+              }
+            });
           }
         }
       }
@@ -323,7 +340,7 @@ export default function ExploreLandPage() {
     }
 
     prefillBuyerFromUser(currentUser);
-    triggerWalletDiscoveryAndConnect();
+    void triggerWalletDiscoveryAndConnect();
   };
 
   const handleAuthGateSuccess = (user: UserAccount) => {
@@ -334,11 +351,13 @@ export default function ExploreLandPage() {
     setActiveUser(user);
     setGateError(null);
     setGateIdentifier('');
+    setGateInviteCode('');
+    setGateRole('user');
     setGateName('');
     setGatePhone('');
     setGateEmail('');
     prefillBuyerFromUser(user);
-    triggerWalletDiscoveryAndConnect();
+    void triggerWalletDiscoveryAndConnect();
   };
 
   const handleGateSignIn = (e: FormEvent) => {
@@ -361,6 +380,16 @@ export default function ExploreLandPage() {
   const handleGateSignUp = (e: FormEvent) => {
     e.preventDefault();
     setGateError(null);
+    if (gateRole === 'registrar' || gateRole === 'governor') {
+      const check = validateRoleInviteCode(gateInviteCode, gateRole);
+      if (!check.valid) {
+        setGateError(
+          check.error ||
+            'A valid administrator authorization code is required to register for this role.',
+        );
+        return;
+      }
+    }
     if (!gateName.trim()) {
       setGateError('Please enter your full name.');
       return;
@@ -377,6 +406,8 @@ export default function ExploreLandPage() {
       fullName: gateName,
       phone: gatePhone,
       email: gateEmail,
+      role: gateRole,
+      inviteCode: gateInviteCode,
     });
     if (error || !user) {
       setGateError(error || 'Unable to create account.');
@@ -385,16 +416,23 @@ export default function ExploreLandPage() {
     handleAuthGateSuccess(user);
   };
 
-  const handleRefreshWallets = () => {
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const wallets = detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
-    if (wallets.length > 0) {
+  const handleRefreshWallets = async () => {
+    setWalletError(null);
+    const wallets = await discoverAllWallets(500);
+    setDetectedWallets(wallets);
+    if (wallets.length === 1) {
       void connectWithWallet(wallets[0]);
+    } else if (wallets.length > 1) {
+      setShowMobileLinks(false);
     } else {
+      if (isMobile && isAndroidDevice()) {
+        triggerDeviceEthereumWalletIntent();
+      }
+      setShowMobileLinks(true);
       setWalletError(
         isMobile
           ? 'No in-app wallet browser detected. Tap your mobile wallet app below to open and connect.'
-          : 'No browser Web3 wallet detected. Install or unlock MetaMask, Rabby, Coinbase Wallet, Trust Wallet, or Phantom.',
+          : 'No browser Web3 wallet detected. Unlock MetaMask, Rabby, Coinbase, Trust, Phantom, or OKX, or open a mobile wallet below.',
       );
     }
   };
@@ -1230,6 +1268,8 @@ export default function ExploreLandPage() {
 
                 <GoogleSignUpButton
                   label="Sign up with Google"
+                  role={buyAuthMode === 'signup' ? gateRole : 'user'}
+                  inviteCode={buyAuthMode === 'signup' ? gateInviteCode : ''}
                   onSuccess={handleAuthGateSuccess}
                   onError={(msg) => setGateError(msg)}
                 />
@@ -1308,6 +1348,83 @@ export default function ExploreLandPage() {
                   </form>
                 ) : (
                   <form onSubmit={handleGateSignUp} className="space-y-3.5">
+                    <div className="space-y-2.5 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.20)] p-3">
+                      <span className="block text-xs font-semibold text-[#F4F7FB]">
+                        Account Type *
+                      </span>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGateRole('user');
+                            setGateInviteCode('');
+                            setGateError(null);
+                          }}
+                          className={`h-9 px-2 rounded-md border text-[11px] font-semibold inline-flex items-center justify-center gap-1 transition-colors ${
+                            gateRole === 'user'
+                              ? 'bg-[#38BDF8] text-[#020305] border-[#67E8F9]'
+                              : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
+                          }`}
+                        >
+                          <User className="h-3 w-3 shrink-0" />
+                          <span>Normal Users</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGateRole('registrar');
+                            setGateError(null);
+                          }}
+                          className={`h-9 px-2 rounded-md border text-[11px] font-semibold inline-flex items-center justify-center gap-1 transition-colors ${
+                            gateRole === 'registrar'
+                              ? 'bg-sky-500/20 text-sky-200 border-sky-400'
+                              : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
+                          }`}
+                        >
+                          <ShieldCheck className="h-3 w-3 shrink-0" />
+                          <span>Registrar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGateRole('governor');
+                            setGateError(null);
+                          }}
+                          className={`h-9 px-2 rounded-md border text-[11px] font-semibold inline-flex items-center justify-center gap-1 transition-colors ${
+                            gateRole === 'governor'
+                              ? 'bg-amber-500/20 text-amber-200 border-amber-400'
+                              : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
+                          }`}
+                        >
+                          <Landmark className="h-3 w-3 shrink-0" />
+                          <span>Governor</span>
+                        </button>
+                      </div>
+
+                      {gateRole !== 'user' && (
+                        <div className="space-y-1 pt-1">
+                          <label htmlFor="gate-invite-code" className="flex items-center gap-1 text-[11px] text-[#F4F7FB]">
+                            <KeyRound className="h-3 w-3 text-amber-400" />
+                            <span>
+                              {gateRole === 'governor' ? 'Governor' : 'Registrar'} Authorization Code *
+                            </span>
+                          </label>
+                          <input
+                            id="gate-invite-code"
+                            type="text"
+                            required
+                            value={gateInviteCode}
+                            onChange={(e) => setGateInviteCode(e.target.value.toUpperCase())}
+                            placeholder={gateRole === 'governor' ? 'GOV-XXXX-XXXX' : 'REG-XXXX-XXXX'}
+                            className="w-full h-9 px-3 rounded-[8px] bg-[#0A0F16] border border-amber-500/40 text-xs font-mono uppercase tracking-wider text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                          />
+                          <p className="text-[11px] text-amber-300/90">
+                            Single-use code: valid for 1 account only and expires immediately after registration.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
                     <div>
                       <label htmlFor="gate-name" className="block text-xs text-[#94A3B8] mb-1">
                         Full Name *
@@ -1363,7 +1480,7 @@ export default function ExploreLandPage() {
                         type="submit"
                         className="flex-1 h-10 rounded-[8px] bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9]"
                       >
-                        Create Account &amp; Continue
+                        Create {getRoleLabel(gateRole)} Account
                       </button>
                     </div>
                   </form>
@@ -1504,16 +1621,16 @@ export default function ExploreLandPage() {
                     </div>
                   )}
 
-                  {/* Primary Connect Wallet Control + Mobile Fallback */}
+                  {/* Primary Connect Wallet Control + Re-scan + Mobile Fallback */}
                   <div className="flex flex-wrap items-center gap-2 pt-0.5">
                     {!connectedWallet && (
                       <button
                         type="button"
                         disabled={walletConnecting}
                         onClick={
-                          detectedWallets.length > 0
+                          detectedWallets.length === 1
                             ? () => void connectWithWallet(detectedWallets[0])
-                            : handleRefreshWallets
+                            : () => void handleRefreshWallets()
                         }
                         className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#38BDF8] text-[#020305] text-xs font-semibold hover:bg-[#67E8F9] disabled:opacity-60 whitespace-nowrap"
                       >
@@ -1522,7 +1639,23 @@ export default function ExploreLandPage() {
                         ) : (
                           <Wallet className="h-3.5 w-3.5" />
                         )}
-                        <span>{walletConnecting ? 'Connecting Wallet…' : 'Connect Wallet'}</span>
+                        <span>
+                          {walletConnecting
+                            ? 'Connecting Wallet…'
+                            : detectedWallets.length > 0
+                              ? `Scan Wallets (${detectedWallets.length} Found)`
+                              : 'Detect & Connect Wallet'}
+                        </span>
+                      </button>
+                    )}
+                    {connectedWallet && (
+                      <button
+                        type="button"
+                        onClick={() => void handleRefreshWallets()}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#0A0F16] border border-[rgba(91,133,167,0.25)] text-[11px] text-[#94A3B8] hover:text-[#F4F7FB] whitespace-nowrap"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5 text-[#38BDF8]" />
+                        <span>Re-scan Wallets</span>
                       </button>
                     )}
                     <button
@@ -1532,7 +1665,7 @@ export default function ExploreLandPage() {
                     >
                       <Smartphone className="h-3.5 w-3.5 text-[#38BDF8]" />
                       <span>
-                        {showMobileLinks ? 'Hide Mobile Wallets' : 'Open Mobile Phone Wallet'}
+                        {showMobileLinks ? 'Hide Phone Wallets' : 'Open Phone Wallet'}
                       </span>
                     </button>
                   </div>

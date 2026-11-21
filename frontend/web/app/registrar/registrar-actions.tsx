@@ -2,9 +2,11 @@
 
 import { useState } from 'react';
 import { apiCall } from '@/lib/api';
+import { WalletConnectModal } from '@/components/web3/WalletConnectModal';
 import {
-  getSnapshotDetectedWallets,
+  discoverAllWallets,
   connectWalletProvider,
+  type DetectedWalletProvider,
 } from '@/lib/web3-wallet';
 import {
   registerTitleOnChain,
@@ -33,6 +35,8 @@ export function RegistrarActions({
   const [loading, setLoading] = useState<'approve' | 'reject' | 'mint' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mintNotice, setMintNotice] = useState<string | null>(null);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
 
   async function handleAction(action: 'approve' | 'reject') {
     setError(null);
@@ -47,17 +51,12 @@ export function RegistrarActions({
     }
   }
 
-  async function handleMintOnChain() {
+  async function executeMintWithWallet(wallet: DetectedWalletProvider) {
     setError(null);
     setMintNotice(null);
+    setShowWalletModal(false);
     setLoading('mint');
     try {
-      const wallets = getSnapshotDetectedWallets();
-      if (wallets.length === 0) {
-        setError('Connect a browser Web3 wallet with REGISTRAR_ROLE to mint on-chain.');
-        return;
-      }
-      const wallet = wallets[0];
       const connected = await connectWalletProvider(wallet);
       const targetOwner = ownerAddress || connected.address;
       const result = await registerTitleOnChain(wallet.provider, {
@@ -79,6 +78,20 @@ export function RegistrarActions({
     } finally {
       setLoading(null);
     }
+  }
+
+  async function handleMintOnChain() {
+    setError(null);
+    setMintNotice(null);
+    const wallets = await discoverAllWallets(300);
+    setDetectedWallets(wallets);
+
+    if (wallets.length === 1) {
+      await executeMintWithWallet(wallets[0]);
+      return;
+    }
+
+    setShowWalletModal(true);
   }
 
   return (
@@ -111,6 +124,17 @@ export function RegistrarActions({
       </div>
       {mintNotice && <p className="text-[11px] font-mono text-emerald-400">{mintNotice}</p>}
       {error && <p className="text-xs text-rose-400">{error}</p>}
+
+      <WalletConnectModal
+        open={showWalletModal}
+        onClose={() => setShowWalletModal(false)}
+        detectedWallets={detectedWallets}
+        connecting={loading === 'mint'}
+        error={error}
+        deepLinkPath="/registrar"
+        title="Select Registrar Wallet to Mint"
+        onSelectWallet={(wallet) => executeMintWithWallet(wallet)}
+      />
     </div>
   );
 }

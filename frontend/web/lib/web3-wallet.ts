@@ -8,14 +8,38 @@ export interface Eip1193Provider {
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
   isMetaMask?: boolean;
   isCoinbaseWallet?: boolean;
+  isWalletLink?: boolean;
   isTrust?: boolean;
   isTrustWallet?: boolean;
   isRabby?: boolean;
   isPhantom?: boolean;
   isOkxWallet?: boolean;
+  isOKExWallet?: boolean;
   isBraveWallet?: boolean;
   isRainbow?: boolean;
+  isBitKeep?: boolean;
+  isBitget?: boolean;
+  isZerion?: boolean;
+  isSafePal?: boolean;
+  isTokenPocket?: boolean;
+  isExodus?: boolean;
+  isBackpack?: boolean;
+  isEnkrypt?: boolean;
+  isTally?: boolean;
+  isTaho?: boolean;
+  isFrame?: boolean;
+  isOneInchIOSWallet?: boolean;
+  isOneInchAndroidWallet?: boolean;
+  isBinance?: boolean;
+  isImToken?: boolean;
+  isStatus?: boolean;
+  isMathWallet?: boolean;
+  isAlphaWallet?: boolean;
+  isOpera?: boolean;
+  isBybit?: boolean;
   providers?: Eip1193Provider[];
+  detected?: Eip1193Provider[];
+  providerMap?: Map<string, Eip1193Provider> | Record<string, Eip1193Provider>;
 }
 
 export interface Eip6963ProviderInfo {
@@ -35,6 +59,7 @@ export interface DetectedWalletProvider {
   name: string;
   icon?: string;
   rdns?: string;
+  source?: 'eip6963' | 'injected';
   provider: Eip1193Provider;
 }
 
@@ -84,26 +109,107 @@ export function formatShortAddress(address: string): string {
 
 export function isMobileDevice(): boolean {
   if (typeof navigator === 'undefined') return false;
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-    navigator.userAgent,
-  );
+  const ua = navigator.userAgent || '';
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua)) {
+    return true;
+  }
+  // iPadOS Safari reports Macintosh with touch points > 1
+  if (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1 && /Macintosh/i.test(ua)) {
+    return true;
+  }
+  return false;
 }
 
 export function isAndroidDevice(): boolean {
   if (typeof navigator === 'undefined') return false;
-  return /Android/i.test(navigator.userAgent);
+  return /Android/i.test(navigator.userAgent || '');
 }
 
-function inferLegacyWalletName(provider: Eip1193Provider): string {
+export function isIosDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  return typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1 && /Macintosh/i.test(ua);
+}
+
+// ============================================================================
+// Global EIP-6963 + Exhaustive Window / Mobile In-App Provider Detection
+// ============================================================================
+
+const eip6963Registry = new Map<string, DetectedWalletProvider>();
+let globalListenerAttached = false;
+
+function handleGlobalEip6963Announce(event: Event) {
+  const customEvent = event as CustomEvent<Eip6963ProviderDetail>;
+  const detail = customEvent.detail;
+  if (!detail?.info?.uuid || !detail?.provider || typeof detail.provider.request !== 'function') {
+    return;
+  }
+
+  eip6963Registry.set(detail.info.uuid, {
+    id: detail.info.uuid,
+    name: detail.info.name,
+    icon: detail.info.icon,
+    rdns: detail.info.rdns,
+    source: 'eip6963',
+    provider: detail.provider,
+  });
+}
+
+function ensureGlobalEip6963Listener() {
+  if (typeof window === 'undefined' || globalListenerAttached) return;
+  globalListenerAttached = true;
+  window.addEventListener('eip6963:announceProvider', handleGlobalEip6963Announce);
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+}
+
+function inferLegacyWalletName(provider: Eip1193Provider, hint?: string): string {
+  // Check specific non-MetaMask wallet flags BEFORE isMetaMask (many wallets spoof isMetaMask)
   if (provider.isRabby) return 'Rabby Wallet';
   if (provider.isPhantom) return 'Phantom Wallet';
-  if (provider.isOkxWallet) return 'OKX Wallet';
+  if (provider.isOkxWallet || provider.isOKExWallet) return 'OKX Wallet';
   if (provider.isTrust || provider.isTrustWallet) return 'Trust Wallet';
-  if (provider.isCoinbaseWallet) return 'Coinbase Wallet';
+  if (provider.isCoinbaseWallet || provider.isWalletLink) return 'Coinbase Wallet';
   if (provider.isRainbow) return 'Rainbow Wallet';
   if (provider.isBraveWallet) return 'Brave Wallet';
+  if (provider.isBitKeep || provider.isBitget) return 'Bitget Wallet';
+  if (provider.isZerion) return 'Zerion Wallet';
+  if (provider.isSafePal) return 'SafePal Wallet';
+  if (provider.isTokenPocket) return 'TokenPocket';
+  if (provider.isExodus) return 'Exodus Wallet';
+  if (provider.isBackpack) return 'Backpack Wallet';
+  if (provider.isEnkrypt) return 'Enkrypt Wallet';
+  if (provider.isTally || provider.isTaho) return 'Taho Wallet';
+  if (provider.isFrame) return 'Frame Wallet';
+  if (provider.isOneInchIOSWallet || provider.isOneInchAndroidWallet) return '1inch Wallet';
+  if (provider.isBinance) return 'Binance Web3 Wallet';
+  if (provider.isImToken) return 'imToken Wallet';
+  if (provider.isStatus) return 'Status Wallet';
+  if (provider.isMathWallet) return 'MathWallet';
+  if (provider.isAlphaWallet) return 'AlphaWallet';
+  if (provider.isBybit) return 'Bybit Wallet';
+  if (provider.isOpera) return 'Opera Crypto Wallet';
   if (provider.isMetaMask) return 'MetaMask';
-  return 'Browser Web3 Wallet';
+  if (hint) return hint;
+  return 'Web3 Browser Wallet';
+}
+
+function extractProviderMapEntries(
+  providerMap: Eip1193Provider['providerMap'],
+  push: (provider: Eip1193Provider | undefined, hint?: string) => void,
+) {
+  if (!providerMap) return;
+  if (providerMap instanceof Map) {
+    providerMap.forEach((prov, key) => {
+      push(prov, typeof key === 'string' ? key : undefined);
+    });
+    return;
+  }
+  if (typeof providerMap === 'object') {
+    Object.entries(providerMap).forEach(([key, prov]) => {
+      push(prov, key);
+    });
+  }
 }
 
 function collectLegacyProviders(): DetectedWalletProvider[] {
@@ -114,35 +220,83 @@ function collectLegacyProviders(): DetectedWalletProvider[] {
     phantom?: { ethereum?: Eip1193Provider };
     okxwallet?: Eip1193Provider;
     coinbaseWalletExtension?: Eip1193Provider;
-    trustwallet?: Eip1193Provider;
+    walletLinkExtension?: Eip1193Provider;
+    trustwallet?: Eip1193Provider & { ethereum?: Eip1193Provider };
+    trustWallet?: Eip1193Provider & { ethereum?: Eip1193Provider };
+    rabby?: Eip1193Provider;
+    bitkeep?: { ethereum?: Eip1193Provider };
+    bitget?: { ethereum?: Eip1193Provider };
+    zerionWallet?: Eip1193Provider;
+    backpack?: { ethereum?: Eip1193Provider };
+    bybitWallet?: Eip1193Provider;
+    tokenpocket?: { ethereum?: Eip1193Provider };
+    safepalProvider?: Eip1193Provider;
+    safepal?: Eip1193Provider;
+    exodus?: { ethereum?: Eip1193Provider };
+    enkrypt?: { providers?: { ethereum?: Eip1193Provider } };
+    braveEthereum?: Eip1193Provider;
+    tally?: Eip1193Provider;
+    taho?: Eip1193Provider;
+    oneInch?: Eip1193Provider;
+    $oneinch?: Eip1193Provider;
+    rainbow?: Eip1193Provider;
+    metamask?: Eip1193Provider;
+    frame?: Eip1193Provider;
+    binancew3w?: { ethereum?: Eip1193Provider };
   };
 
-  const candidates: Eip1193Provider[] = [];
+  const candidates: Array<{ provider: Eip1193Provider; hint?: string }> = [];
+  const push = (provider: Eip1193Provider | undefined, hint?: string) => {
+    if (!provider || typeof provider.request !== 'function') return;
+    candidates.push({ provider, hint });
+  };
 
   if (win.ethereum) {
-    if (Array.isArray(win.ethereum.providers) && win.ethereum.providers.length > 0) {
-      candidates.push(...win.ethereum.providers);
-    } else {
-      candidates.push(win.ethereum);
+    if (Array.isArray(win.ethereum.providers)) {
+      win.ethereum.providers.forEach((p) => push(p));
     }
+    if (Array.isArray(win.ethereum.detected)) {
+      win.ethereum.detected.forEach((p) => push(p));
+    }
+    extractProviderMapEntries(win.ethereum.providerMap, push);
+    push(win.ethereum);
   }
-  if (win.phantom?.ethereum) candidates.push(win.phantom.ethereum);
-  if (win.okxwallet) candidates.push(win.okxwallet);
-  if (win.coinbaseWalletExtension) candidates.push(win.coinbaseWalletExtension);
-  if (win.trustwallet) candidates.push(win.trustwallet);
+
+  push(win.phantom?.ethereum, 'Phantom Wallet');
+  push(win.okxwallet, 'OKX Wallet');
+  push(win.coinbaseWalletExtension, 'Coinbase Wallet');
+  push(win.walletLinkExtension, 'Coinbase Wallet');
+  push(win.trustwallet?.ethereum ?? win.trustwallet, 'Trust Wallet');
+  push(win.trustWallet?.ethereum ?? win.trustWallet, 'Trust Wallet');
+  push(win.rabby, 'Rabby Wallet');
+  push(win.bitkeep?.ethereum, 'Bitget Wallet');
+  push(win.bitget?.ethereum, 'Bitget Wallet');
+  push(win.zerionWallet, 'Zerion Wallet');
+  push(win.backpack?.ethereum, 'Backpack Wallet');
+  push(win.bybitWallet, 'Bybit Wallet');
+  push(win.tokenpocket?.ethereum, 'TokenPocket');
+  push(win.safepalProvider ?? win.safepal, 'SafePal Wallet');
+  push(win.exodus?.ethereum, 'Exodus Wallet');
+  push(win.enkrypt?.providers?.ethereum, 'Enkrypt Wallet');
+  push(win.braveEthereum, 'Brave Wallet');
+  push(win.tally ?? win.taho, 'Taho Wallet');
+  push(win.oneInch ?? win.$oneinch, '1inch Wallet');
+  push(win.rainbow, 'Rainbow Wallet');
+  push(win.metamask, 'MetaMask');
+  push(win.frame, 'Frame Wallet');
+  push(win.binancew3w?.ethereum, 'Binance Web3 Wallet');
 
   const unique: DetectedWalletProvider[] = [];
   const seenProviders = new Set<Eip1193Provider>();
 
-  candidates.forEach((provider, index) => {
-    if (!provider || typeof provider.request !== 'function' || seenProviders.has(provider)) {
-      return;
-    }
+  candidates.forEach(({ provider, hint }, index) => {
+    if (seenProviders.has(provider)) return;
     seenProviders.add(provider);
-    const name = inferLegacyWalletName(provider);
+    const name = inferLegacyWalletName(provider, hint);
     unique.push({
       id: `legacy-${name.toLowerCase().replace(/\s+/g, '-')}-${index}`,
       name,
+      source: 'injected',
       provider,
     });
   });
@@ -150,66 +304,107 @@ function collectLegacyProviders(): DetectedWalletProvider[] {
   return unique;
 }
 
+function getMergedDetectedWallets(
+  localEip6963Map?: Map<string, DetectedWalletProvider>,
+): DetectedWalletProvider[] {
+  const eip6963List = Array.from((localEip6963Map ?? eip6963Registry).values());
+  const merged: DetectedWalletProvider[] = [...eip6963List];
+  const legacy = collectLegacyProviders();
+
+  for (const item of legacy) {
+    const alreadyIncluded = merged.some(
+      (existing) =>
+        existing.provider === item.provider ||
+        (existing.source === 'eip6963' &&
+          existing.name.toLowerCase() === item.name.toLowerCase()),
+    );
+    if (!alreadyIncluded) {
+      merged.push(item);
+    }
+  }
+
+  return merged;
+}
+
 /**
- * Discovers all EIP-6963 and legacy injected Web3 wallets synchronously + via event listener.
+ * Synchronous snapshot of all already-announced EIP-6963 + injected browser/device wallets.
+ */
+export function getSnapshotDetectedWallets(): DetectedWalletProvider[] {
+  if (typeof window === 'undefined') return [];
+  ensureGlobalEip6963Listener();
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+  return getMergedDetectedWallets();
+}
+
+/**
+ * Actively requests EIP-6963 wallets + probes window injections (waiting briefly so late-injecting
+ * desktop extensions or mobile DApp browsers all respond).
+ */
+export async function discoverAllWallets(waitMs = 450): Promise<DetectedWalletProvider[]> {
+  if (typeof window === 'undefined') return [];
+  ensureGlobalEip6963Listener();
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, waitMs);
+  });
+
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+  return getMergedDetectedWallets();
+}
+
+/**
+ * Discovers all EIP-6963 and legacy injected Web3 wallets synchronously + via multi-stage events.
  */
 export function subscribeWalletDiscovery(
   onChange: (wallets: DetectedWalletProvider[]) => void,
 ): () => void {
   if (typeof window === 'undefined') return () => {};
 
-  const eip6963Map = new Map<string, DetectedWalletProvider>();
+  ensureGlobalEip6963Listener();
 
   const emitMerged = () => {
-    const merged: DetectedWalletProvider[] = Array.from(eip6963Map.values());
-    const legacy = collectLegacyProviders();
-
-    for (const item of legacy) {
-      const alreadyIncluded = merged.some(
-        (existing) =>
-          existing.provider === item.provider ||
-          existing.name.toLowerCase() === item.name.toLowerCase(),
-      );
-      if (!alreadyIncluded) {
-        merged.push(item);
-      }
-    }
-    onChange(merged);
+    onChange(getMergedDetectedWallets());
   };
 
   const handleAnnounce = (event: Event) => {
-    const customEvent = event as CustomEvent<Eip6963ProviderDetail>;
-    const detail = customEvent.detail;
-    if (!detail?.info?.uuid || !detail?.provider) return;
-
-    eip6963Map.set(detail.info.uuid, {
-      id: detail.info.uuid,
-      name: detail.info.name,
-      icon: detail.info.icon,
-      rdns: detail.info.rdns,
-      provider: detail.provider,
-    });
+    handleGlobalEip6963Announce(event);
     emitMerged();
+  };
+
+  const handleRequestAndEmit = () => {
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    emitMerged();
+  };
+
+  const handleVisibility = () => {
+    if (document.visibilityState === 'visible') {
+      handleRequestAndEmit();
+    }
   };
 
   window.addEventListener('eip6963:announceProvider', handleAnnounce);
+  window.addEventListener('ethereum#initialized', handleRequestAndEmit);
+  window.addEventListener('focus', handleRequestAndEmit);
+  document.addEventListener('visibilitychange', handleVisibility);
+
   window.dispatchEvent(new Event('eip6963:requestProvider'));
   emitMerged();
 
-  // Re-emit shortly after mount in case an extension injects slightly late
-  const timer = window.setTimeout(() => {
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    emitMerged();
-  }, 250);
+  // Multi-stage delayed checks for browser extensions / mobile DApp browsers that inject after load
+  const timer1 = window.setTimeout(handleRequestAndEmit, 150);
+  const timer2 = window.setTimeout(handleRequestAndEmit, 600);
+  const timer3 = window.setTimeout(handleRequestAndEmit, 1500);
 
   return () => {
     window.removeEventListener('eip6963:announceProvider', handleAnnounce);
-    window.clearTimeout(timer);
+    window.removeEventListener('ethereum#initialized', handleRequestAndEmit);
+    window.removeEventListener('focus', handleRequestAndEmit);
+    document.removeEventListener('visibilitychange', handleVisibility);
+    window.clearTimeout(timer1);
+    window.clearTimeout(timer2);
+    window.clearTimeout(timer3);
   };
-}
-
-export function getSnapshotDetectedWallets(): DetectedWalletProvider[] {
-  return collectLegacyProviders();
 }
 
 export function mapWalletError(err: unknown): string {
@@ -348,7 +543,7 @@ export async function sendLandPurchaseTransaction(
 }
 
 /**
- * Generates EIP-681 `ethereum:` intent URI that invokes any mobile wallet registered on the device.
+ * Generates EIP-681 `ethereum:` intent URI that invokes any Web3 wallet registered on the device.
  */
 export function buildEthereumIntentUri(): string {
   return `ethereum:${ANAGU_ESCROW_ADDRESS}?value=0`;
@@ -369,12 +564,14 @@ export function triggerDeviceEthereumWalletIntent(): void {
 
 /**
  * Builds universal mobile wallet deep links so tapping any mobile wallet opens the given
- * app path inside that wallet's built-in DApp browser.
+ * app path inside that wallet's built-in Web3 DApp browser.
  */
-export function getMobileWalletDeepLinksForPath(relativePath: string): MobileWalletDeepLink[] {
+export function getMobileWalletDeepLinksForPath(relativePath?: string): MobileWalletDeepLink[] {
   if (typeof window === 'undefined') return [];
 
-  const normalizedPath = relativePath.startsWith('/') ? relativePath : `/${relativePath}`;
+  const resolvedPath =
+    relativePath ?? `${window.location.pathname}${window.location.search || ''}`;
+  const normalizedPath = resolvedPath.startsWith('/') ? resolvedPath : `/${resolvedPath}`;
   const targetUrl = `${window.location.origin}${normalizedPath}`;
   const hostAndPath = targetUrl.replace(/^https?:\/\//, '');
   const encodedUrl = encodeURIComponent(targetUrl);
@@ -422,6 +619,34 @@ export function getMobileWalletDeepLinksForPath(relativePath: string): MobileWal
       subtitle: 'Open in Rainbow App',
       href: `https://rnbwapp.com/dapp?url=${encodedUrl}`,
       accentClass: 'border-pink-500/40 hover:border-pink-400 text-pink-300',
+    },
+    {
+      id: 'bitget',
+      name: 'Bitget Wallet',
+      subtitle: 'Open in Bitget App',
+      href: `https://bkcode.vip?action=dapp&url=${encodedUrl}`,
+      accentClass: 'border-cyan-500/40 hover:border-cyan-400 text-cyan-300',
+    },
+    {
+      id: 'zerion',
+      name: 'Zerion',
+      subtitle: 'Open in Zerion App',
+      href: `https://link.zerion.io/open_url?url=${encodedUrl}`,
+      accentClass: 'border-indigo-500/40 hover:border-indigo-400 text-indigo-300',
+    },
+    {
+      id: 'safepal',
+      name: 'SafePal',
+      subtitle: 'Open in SafePal App',
+      href: `https://link.safepal.io/open_url?url=${encodedUrl}`,
+      accentClass: 'border-teal-500/40 hover:border-teal-400 text-teal-300',
+    },
+    {
+      id: 'oneinch',
+      name: '1inch Wallet',
+      subtitle: 'Open in 1inch App',
+      href: `https://wallet.1inch.io/dapp?url=${encodedUrl}`,
+      accentClass: 'border-slate-500/40 hover:border-slate-400 text-slate-200',
     },
   ];
 }

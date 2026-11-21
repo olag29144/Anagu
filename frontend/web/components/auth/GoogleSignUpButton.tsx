@@ -2,16 +2,25 @@
 
 import { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
-import { signUpOrSignInWithGoogle, type UserAccount } from '@/lib/user-store';
+import {
+  signUpOrSignInWithGoogle,
+  validateRoleInviteCode,
+  type UserAccount,
+  type UserRole,
+} from '@/lib/user-store';
 
 interface GoogleSignUpButtonProps {
   label?: string;
+  role?: UserRole;
+  inviteCode?: string;
   onSuccess?: (user: UserAccount) => void;
   onError?: (message: string) => void;
 }
 
 export function GoogleSignUpButton({
   label = 'Sign up with Google',
+  role = 'user',
+  inviteCode = '',
   onSuccess,
   onError,
 }: GoogleSignUpButtonProps) {
@@ -61,6 +70,8 @@ export function GoogleSignUpButton({
           email: payload.profile.email,
           googleId: payload.profile.googleId,
           avatarUrl: payload.profile.avatarUrl,
+          role,
+          inviteCode,
         });
         setLoading(false);
         if (result.error || !result.user) {
@@ -75,10 +86,22 @@ export function GoogleSignUpButton({
     return () => {
       window.removeEventListener('message', handleMessage);
     };
-  }, [onSuccess, onError]);
+  }, [onSuccess, onError, role, inviteCode]);
 
   const handleClick = async () => {
     setSetupInfo(null);
+
+    if (role === 'registrar' || role === 'governor') {
+      const check = validateRoleInviteCode(inviteCode, role);
+      if (!check.valid) {
+        onError?.(
+          check.error ||
+            'A valid administrator authorization code is required for this role.',
+        );
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const origin = encodeURIComponent(window.location.origin);

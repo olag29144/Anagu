@@ -31,16 +31,17 @@ import {
   type LatLngPoint,
 } from '@/lib/gis-utils';
 import type { OpenMapLayerId } from '@/lib/openmap-tiles';
+import { WalletConnectModal } from '@/components/web3/WalletConnectModal';
 import {
   subscribeWalletDiscovery,
-  getSnapshotDetectedWallets,
+  discoverAllWallets,
   connectWalletProvider,
-  getMobileWalletDeepLinksForPath,
   triggerDeviceEthereumWalletIntent,
   isMobileDevice,
   isAndroidDevice,
   mapWalletError,
   type DetectedWalletProvider,
+  type ConnectedWalletState,
 } from '@/lib/web3-wallet';
 import {
   registerTitleOnChain,
@@ -53,14 +54,12 @@ import {
   Check,
   CheckCircle2,
   Compass,
-  ExternalLink,
   FileText,
   Image as ImageIcon,
   Layers,
   ListChecks,
   Loader2,
   MapPin,
-  Smartphone,
   Trash2,
   Upload,
   User,
@@ -167,8 +166,10 @@ export default function RegisterLandPage() {
   const [ownerWalletAddress, setOwnerWalletAddress] = useState('');
   const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
   const [connectedProvider, setConnectedProvider] = useState<DetectedWalletProvider | null>(null);
+  const [connectedWallet, setConnectedWallet] = useState<ConnectedWalletState | null>(null);
   const [connectingWallet, setConnectingWallet] = useState(false);
-  const [showMobileWalletLinks, setShowMobileWalletLinks] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [walletModalError, setWalletModalError] = useState<string | null>(null);
   const [mintingOnChain, setMintingOnChain] = useState(false);
   const [onChainMintError, setOnChainMintError] = useState<string | null>(null);
 
@@ -322,50 +323,59 @@ export default function RegisterLandPage() {
 
   const isValidEthAddress = (addr: string) => /^0x[a-fA-F0-9]{40}$/.test(addr.trim());
 
-  const handleAutoFillWallet = async () => {
-    setError(null);
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const wallets =
-      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
-    if (wallets.length === 0) {
-      if (isMobileDevice() && isAndroidDevice()) {
-        triggerDeviceEthereumWalletIntent();
-      }
-      setShowMobileWalletLinks(true);
-      setError(
-        'No browser Web3 wallet extension detected. Open a mobile wallet below, unlock your browser extension, or paste your 0x... wallet address.',
-      );
-      return;
-    }
-
+  const connectSelectedWallet = async (wallet: DetectedWalletProvider) => {
     setConnectingWallet(true);
+    setWalletModalError(null);
+    setError(null);
     try {
-      const connected = await connectWalletProvider(wallets[0]);
-      setConnectedProvider(wallets[0]);
+      const connected = await connectWalletProvider(wallet);
+      setConnectedProvider(wallet);
+      setConnectedWallet(connected);
       setOwnerWalletAddress(connected.address);
-      setShowMobileWalletLinks(false);
+      setShowWalletModal(false);
       const current = getActiveUserAccount();
       if (current) {
         updateUserProfile(current.id, { walletAddress: connected.address });
       }
+      return connected;
     } catch (err) {
-      setError(mapWalletError(err));
+      const msg = mapWalletError(err);
+      setWalletModalError(msg);
+      setError(msg);
+      return null;
     } finally {
       setConnectingWallet(false);
     }
   };
 
+  const handleAutoFillWallet = async () => {
+    setError(null);
+    setWalletModalError(null);
+    const wallets = await discoverAllWallets(300);
+    setDetectedWallets(wallets);
+
+    if (wallets.length === 1) {
+      await connectSelectedWallet(wallets[0]);
+      return;
+    }
+
+    if (wallets.length === 0 && isMobileDevice() && isAndroidDevice()) {
+      triggerDeviceEthereumWalletIntent();
+    }
+    setShowWalletModal(true);
+  };
+
   const handleRegisterOnChain = async () => {
     if (!registeredLand) return;
     setOnChainMintError(null);
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const wallets =
-      detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+    const wallets = await discoverAllWallets(300);
+    setDetectedWallets(wallets);
     const walletToUse = connectedProvider ?? wallets[0];
 
     if (!walletToUse) {
+      setShowWalletModal(true);
       setOnChainMintError(
-        'No Web3 wallet detected. Connect MetaMask or another EIP-1193 wallet to mint on LandRegistry.',
+        'No Web3 wallet detected. Connect a browser wallet or mobile wallet app to mint on LandRegistry.',
       );
       return;
     }
@@ -374,6 +384,7 @@ export default function RegisterLandPage() {
     try {
       const connected = await connectWalletProvider(walletToUse);
       setConnectedProvider(walletToUse);
+      setConnectedWallet(connected);
       const targetOwner =
         registeredLand.ownerWalletAddress &&
         /^0x[a-fA-F0-9]{40}$/.test(registeredLand.ownerWalletAddress)
@@ -964,35 +975,6 @@ export default function RegisterLandPage() {
                         Valid Ethereum (ERC-721 / Web3) wallet address
                       </p>
                     )}
-                    {showMobileWalletLinks && (
-                      <div className="mt-3 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-3 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-[11px] font-mono uppercase tracking-wider text-[#94A3B8] inline-flex items-center gap-1.5">
-                            <Smartphone className="h-3.5 w-3.5 text-[#38BDF8]" />
-                            <span>Open in Mobile Wallet App</span>
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => setShowMobileWalletLinks(false)}
-                            className="text-[11px] text-[#64748B] hover:text-[#F4F7FB]"
-                          >
-                            Hide
-                          </button>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                          {getMobileWalletDeepLinksForPath('/register').map((wallet) => (
-                            <a
-                              key={wallet.id}
-                              href={wallet.href}
-                              className={`px-2.5 py-2 rounded-lg bg-[#0A0F16] border text-xs font-medium flex items-center justify-between gap-1.5 transition-colors ${wallet.accentClass}`}
-                            >
-                              <span className="truncate">{wallet.name}</span>
-                              <ExternalLink className="h-3 w-3 shrink-0 opacity-80" />
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   {viewMode === 'guided' && (
@@ -1521,6 +1503,24 @@ export default function RegisterLandPage() {
           )}
         </div>
       </main>
+
+      <WalletConnectModal
+        open={showWalletModal}
+        onClose={() => setShowWalletModal(false)}
+        detectedWallets={detectedWallets}
+        connectedWallet={connectedWallet}
+        connecting={connectingWallet}
+        error={walletModalError}
+        deepLinkPath="/register"
+        onSelectWallet={async (wallet) => {
+          await connectSelectedWallet(wallet);
+        }}
+        onDisconnect={() => {
+          setConnectedProvider(null);
+          setConnectedWallet(null);
+          setWalletModalError(null);
+        }}
+      />
     </div>
   );
 }

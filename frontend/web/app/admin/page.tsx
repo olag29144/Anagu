@@ -22,7 +22,14 @@ import {
   getUserAccountsWithStats,
   updateUserAccountStatus,
   deleteUserAccount,
+  getRoleInviteCodes,
+  generateRoleInviteCode,
+  revokeRoleInviteCode,
+  deleteRoleInviteCode,
+  getRoleLabel,
   type UserAccountWithStats,
+  type RoleInviteCode,
+  type InviteCodeRole,
 } from '@/lib/user-store';
 import {
   ShieldCheck,
@@ -52,12 +59,23 @@ import {
   FileSpreadsheet,
   CheckCheck,
   FileCode2,
+  KeyRound,
+  Copy,
+  Check,
+  Landmark,
 } from 'lucide-react';
 import { ContractRegistryPanel } from '@/components/web3/ContractRegistryPanel';
 
 const ADMIN_SESSION_KEY = 'anagu_admin_authenticated_v1';
 
-type AdminTab = 'users' | 'registrations' | 'pending_queue' | 'marketplace' | 'orders' | 'contracts';
+type AdminTab =
+  | 'users'
+  | 'access_codes'
+  | 'registrations'
+  | 'pending_queue'
+  | 'marketplace'
+  | 'orders'
+  | 'contracts';
 
 function downloadCsvFile(filename: string, rows: string[][]) {
   const escapeCell = (val: string) => `"${String(val ?? '').replace(/"/g, '""')}"`;
@@ -90,6 +108,14 @@ export default function StandaloneAdminPage() {
   const [listings, setListings] = useState<LandListing[]>([]);
   const [orders, setOrders] = useState<LandPurchaseOrder[]>([]);
   const [userStats, setUserStats] = useState<UserAccountWithStats[]>([]);
+  const [inviteCodes, setInviteCodes] = useState<RoleInviteCode[]>([]);
+
+  // Role Access Code generator state
+  const [codeRoleToGenerate, setCodeRoleToGenerate] = useState<InviteCodeRole>('registrar');
+  const [codeRecipientNote, setCodeRecipientNote] = useState('');
+  const [lastGeneratedCode, setLastGeneratedCode] = useState<RoleInviteCode | null>(null);
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
+  const [codeFilter, setCodeFilter] = useState<'all' | 'active' | 'used' | 'revoked'>('all');
 
   // Filters & Inspection
   const [userSearch, setUserSearch] = useState('');
@@ -130,9 +156,11 @@ export default function StandaloneAdminPage() {
     const nextListings = getLandListings();
     const nextOrders = getPurchaseOrders();
     const nextUsers = getUserAccountsWithStats();
+    const nextCodes = getRoleInviteCodes();
     setListings(nextListings);
     setOrders(nextOrders);
     setUserStats(nextUsers);
+    setInviteCodes(nextCodes);
     if (inspectedUser) {
       setInspectedUser(
         nextUsers.find((u) => u.account.id === inspectedUser.account.id) ?? null,
@@ -150,7 +178,23 @@ export default function StandaloneAdminPage() {
     setListings(getLandListings());
     setOrders(getPurchaseOrders());
     setUserStats(getUserAccountsWithStats());
+    setInviteCodes(getRoleInviteCodes());
     setCheckingAuth(false);
+
+    const handleSync = () => {
+      setListings(getLandListings());
+      setOrders(getPurchaseOrders());
+      setUserStats(getUserAccountsWithStats());
+      setInviteCodes(getRoleInviteCodes());
+    };
+    window.addEventListener('anagu-codes-changed', handleSync);
+    window.addEventListener('anagu-user-changed', handleSync);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener('anagu-codes-changed', handleSync);
+      window.removeEventListener('anagu-user-changed', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
   }, []);
 
   const handleAdminLogin = (e: FormEvent) => {
@@ -256,6 +300,45 @@ export default function StandaloneAdminPage() {
     }
     refreshData();
     notifyAction('User account removed.');
+  };
+
+  const handleGenerateRoleCode = (e: FormEvent) => {
+    e.preventDefault();
+    const created = generateRoleInviteCode(codeRoleToGenerate, codeRecipientNote);
+    setLastGeneratedCode(created);
+    setCodeRecipientNote('');
+    refreshData();
+    notifyAction(
+      `Generated ${created.role === 'governor' ? 'Governor' : 'Registrar'} code: ${created.code}`,
+    );
+  };
+
+  const handleCopyCode = async (codeObj: RoleInviteCode) => {
+    try {
+      await navigator.clipboard.writeText(codeObj.code);
+      setCopiedCodeId(codeObj.id);
+      setTimeout(() => {
+        setCopiedCodeId((curr) => (curr === codeObj.id ? null : curr));
+      }, 2000);
+      notifyAction(`Copied code ${codeObj.code}`);
+    } catch {
+      notifyAction(`Code: ${codeObj.code}`);
+    }
+  };
+
+  const handleRevokeCode = (codeId: string) => {
+    revokeRoleInviteCode(codeId);
+    refreshData();
+    notifyAction('Authorization code revoked.');
+  };
+
+  const handleDeleteCode = (codeId: string) => {
+    deleteRoleInviteCode(codeId);
+    if (lastGeneratedCode?.id === codeId) {
+      setLastGeneratedCode(null);
+    }
+    refreshData();
+    notifyAction('Authorization code deleted.');
   };
 
   const handleApproveAllForUser = (userLands: LandListing[]) => {
@@ -552,8 +635,11 @@ export default function StandaloneAdminPage() {
   const pendingOrders = orders.filter((o) => o.status !== 'completed');
   const totalPaidUsd = paidOrders.reduce((sum, o) => sum + getListingPriceUsd(o), 0);
 
+  const activeCodesCount = inviteCodes.filter((c) => c.status === 'active').length;
+
   const tabLabels: Record<AdminTab, string> = {
     users: 'User Accounts',
+    access_codes: 'Registrar & Governor Codes',
     registrations: 'Registered Lands',
     pending_queue: 'Pending Review',
     marketplace: 'For Sale Inventory',
@@ -573,6 +659,13 @@ export default function StandaloneAdminPage() {
       label: 'User Accounts',
       count: userStats.length,
       icon: Users,
+    },
+    {
+      id: 'access_codes',
+      label: 'Role Access Codes',
+      count: activeCodesCount,
+      icon: KeyRound,
+      toneClass: 'text-amber-400',
     },
     {
       id: 'registrations',
@@ -966,6 +1059,18 @@ export default function StandaloneAdminPage() {
                         <div className="space-y-1.5 min-w-0">
                           <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
                             <span className="text-indigo-400">{account.id}</span>
+                            <span aria-hidden="true" className="text-slate-600">·</span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                account.role === 'governor'
+                                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                                  : account.role === 'registrar'
+                                    ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+                                    : 'bg-slate-800 text-slate-300 border-slate-700'
+                              }`}
+                            >
+                              {getRoleLabel(account.role)}
+                            </span>
                             <span aria-hidden="true" className="text-slate-600">·</span>
                             <span
                               className={
@@ -1479,6 +1584,259 @@ export default function StandaloneAdminPage() {
             </section>
           )}
 
+          {/* TAB 2B: Registrar & Governor Registration Access Codes */}
+          {activeTab === 'access_codes' && (
+            <section className="space-y-6">
+              <div className="rounded-xl bg-[#0F172A] border border-slate-800 p-6 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                  <div>
+                    <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                      <KeyRound className="h-4 w-4 text-amber-400" />
+                      <span>Generate Registrar &amp; Governor Registration Codes</span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Generate a strict single-use authorization code for an official to register as a Registrar or Governor. Each code creates only one account and automatically expires immediately after use. Without an active code, users can only register as Normal Users.
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleGenerateRoleCode} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-2">
+                        Target Account Role *
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setCodeRoleToGenerate('registrar')}
+                          className={`h-11 px-3 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-colors ${
+                            codeRoleToGenerate === 'registrar'
+                              ? 'bg-sky-500/20 border-sky-400 text-sky-200'
+                              : 'bg-[#070B12] border-slate-700 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <ShieldCheck className="h-4 w-4" />
+                          <span>Registrar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCodeRoleToGenerate('governor')}
+                          className={`h-11 px-3 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-colors ${
+                            codeRoleToGenerate === 'governor'
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                              : 'bg-[#070B12] border-slate-700 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <Landmark className="h-4 w-4" />
+                          <span>Governor</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="code-note" className="block text-xs text-slate-400 mb-2">
+                        Recipient Name / Bureau Note (Optional)
+                      </label>
+                      <input
+                        id="code-note"
+                        type="text"
+                        value={codeRecipientNote}
+                        onChange={(e) => setCodeRecipientNote(e.target.value)}
+                        placeholder={
+                          codeRoleToGenerate === 'governor'
+                            ? 'e.g. Executive Governor Office — Lagos State'
+                            : 'e.g. Barr. Fatimah Aliyu — Deeds Registry'
+                        }
+                        className="w-full h-11 px-3.5 rounded-lg bg-[#070B12] border border-slate-700 text-sm text-white placeholder-slate-500 focus:border-indigo-400 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="submit"
+                      className="h-10 px-5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors"
+                    >
+                      <KeyRound className="h-4 w-4" />
+                      <span>
+                        Generate{' '}
+                        {codeRoleToGenerate === 'governor' ? 'Governor' : 'Registrar'} Code
+                      </span>
+                    </button>
+                  </div>
+                </form>
+
+                {lastGeneratedCode && (
+                  <div className="rounded-xl bg-[#070B12] border border-emerald-500/40 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-emerald-400">
+                        New{' '}
+                        {lastGeneratedCode.role === 'governor' ? 'Governor' : 'Registrar'}{' '}
+                        Code Ready to Share
+                      </p>
+                      <p className="text-xl font-bold font-mono tracking-wider text-white">
+                        {lastGeneratedCode.code}
+                      </p>
+                      {lastGeneratedCode.recipientNote && (
+                        <p className="text-xs text-slate-400">
+                          Assigned Note: {lastGeneratedCode.recipientNote}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyCode(lastGeneratedCode)}
+                      className="h-10 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold inline-flex items-center gap-2 shrink-0"
+                    >
+                      {copiedCodeId === lastGeneratedCode.id ? (
+                        <>
+                          <Check className="h-4 w-4" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-4 w-4" />
+                          <span>Copy Code</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Issued Codes History */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-white">
+                    Issued Authorization Codes ({inviteCodes.length})
+                  </h3>
+                  <select
+                    value={codeFilter}
+                    onChange={(e) => setCodeFilter(e.target.value as typeof codeFilter)}
+                    className="h-9 px-3 rounded-lg bg-[#0F172A] border border-slate-700 text-xs text-white focus:border-indigo-400 focus:outline-none"
+                  >
+                    <option value="all">All Codes ({inviteCodes.length})</option>
+                    <option value="active">
+                      Active ({inviteCodes.filter((c) => c.status === 'active').length})
+                    </option>
+                    <option value="used">
+                      Expired / Used ({inviteCodes.filter((c) => c.status === 'used').length})
+                    </option>
+                    <option value="revoked">
+                      Revoked ({inviteCodes.filter((c) => c.status === 'revoked').length})
+                    </option>
+                  </select>
+                </div>
+
+                {inviteCodes.filter((c) => codeFilter === 'all' || c.status === codeFilter).length ===
+                0 ? (
+                  <div className="rounded-xl bg-[#0F172A] border border-slate-800 p-10 text-center text-sm text-slate-400">
+                    No authorization codes generated yet. Use the form above to generate a Registrar or Governor registration code.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {inviteCodes
+                      .filter((c) => codeFilter === 'all' || c.status === codeFilter)
+                      .map((codeItem) => (
+                        <div
+                          key={codeItem.id}
+                          className="rounded-xl bg-[#0F172A] border border-slate-800 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4"
+                        >
+                          <div className="space-y-1.5 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                              <span className="text-sm font-bold text-white tracking-wider">
+                                {codeItem.code}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                  codeItem.role === 'governor'
+                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                                    : 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+                                }`}
+                              >
+                                {codeItem.role === 'governor' ? 'Governor' : 'Registrar'}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                  codeItem.status === 'active'
+                                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
+                                    : codeItem.status === 'used'
+                                      ? 'bg-slate-700/40 text-slate-300 border-slate-600'
+                                      : 'bg-rose-500/15 text-rose-300 border-rose-500/35'
+                                }`}
+                              >
+                                {codeItem.status === 'used'
+                                  ? 'EXPIRED (1/1 USED)'
+                                  : codeItem.status.toUpperCase()}
+                              </span>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+                              <span>
+                                Created {new Date(codeItem.createdAt).toLocaleString()}
+                              </span>
+                              {codeItem.recipientNote && (
+                                <span className="text-slate-300">
+                                  Note: {codeItem.recipientNote}
+                                </span>
+                              )}
+                              {codeItem.status === 'used' && codeItem.usedByName && (
+                                <span className="text-indigo-300 font-mono">
+                                  Used &amp; expired by {codeItem.usedByName} ({codeItem.usedByEmail})
+                                  {codeItem.usedAt
+                                    ? ` · ${new Date(codeItem.usedAt).toLocaleString()}`
+                                    : ''}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => void handleCopyCode(codeItem)}
+                              className="h-9 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium inline-flex items-center gap-1.5"
+                            >
+                              {copiedCodeId === codeItem.id ? (
+                                <>
+                                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                                  <span>Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="h-3.5 w-3.5" />
+                                  <span>Copy</span>
+                                </>
+                              )}
+                            </button>
+                            {codeItem.status === 'active' && (
+                              <button
+                                type="button"
+                                onClick={() => handleRevokeCode(codeItem.id)}
+                                className="h-9 px-3 rounded-lg bg-slate-800 hover:bg-amber-950/50 border border-slate-700 text-amber-300 text-xs font-medium inline-flex items-center gap-1.5"
+                              >
+                                <Ban className="h-3.5 w-3.5" />
+                                <span>Revoke</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCode(codeItem.id)}
+                              className="h-9 px-2.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 transition-colors"
+                              aria-label={`Delete code ${codeItem.code}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
           {/* TAB 6: Smart Contracts Registry & Verification */}
           {activeTab === 'contracts' && (
             <section className="space-y-4">
@@ -1498,8 +1856,20 @@ export default function StandaloneAdminPage() {
           <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl bg-[#0F172A] border border-slate-700 p-6 space-y-5">
             <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">
               <div>
-                <div className="flex items-center gap-2 text-xs font-mono">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
                   <span className="text-indigo-400">{inspectedUser.account.id}</span>
+                  <span className="text-slate-600">·</span>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                      inspectedUser.account.role === 'governor'
+                        ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                        : inspectedUser.account.role === 'registrar'
+                          ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+                          : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    {getRoleLabel(inspectedUser.account.role)}
+                  </span>
                   <span className="text-slate-600">·</span>
                   <span
                     className={
@@ -1516,6 +1886,9 @@ export default function StandaloneAdminPage() {
                 </h3>
                 <p className="text-xs text-slate-400">
                   {inspectedUser.account.email} · {inspectedUser.account.phone}
+                  {inspectedUser.account.inviteCodeUsed
+                    ? ` · Registered with code ${inspectedUser.account.inviteCodeUsed}`
+                    : ''}
                 </p>
               </div>
               <button
