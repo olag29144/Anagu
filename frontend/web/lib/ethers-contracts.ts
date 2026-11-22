@@ -10,6 +10,92 @@ import {
   ContractRevocationGround,
 } from './contracts';
 
+export interface IntegratedTokenInfo {
+  address: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+  loadedFromChain: boolean;
+}
+
+export interface IntegratedTokenBalance {
+  address: string;
+  balanceWei: bigint;
+  balanceFormatted: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+}
+
+export interface PayLandWithTokenResult {
+  txHash: string;
+  amountWei: bigint;
+  amountFormatted: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  recipient: string;
+  payer: string;
+  tokenAddress: string;
+}
+
+const FALLBACK_TOKEN_SYMBOL =
+  process.env.NEXT_PUBLIC_LAND_FEE_TOKEN_SYMBOL?.trim() || 'LFEE';
+
+export const DEFAULT_INTEGRATED_TOKEN_INFO: IntegratedTokenInfo = {
+  address: LAND_FEE_TOKEN_ADDRESS,
+  name: 'LandFeeToken',
+  symbol: FALLBACK_TOKEN_SYMBOL,
+  decimals: 18,
+  loadedFromChain: false,
+};
+
+const TOKEN_META_CACHE_KEY = `anagu_token_meta_${LAND_FEE_TOKEN_ADDRESS.toLowerCase()}`;
+let memoryCachedTokenInfo: IntegratedTokenInfo | null = null;
+
+export function getCachedIntegratedTokenInfo(): IntegratedTokenInfo {
+  if (memoryCachedTokenInfo) {
+    return memoryCachedTokenInfo;
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(TOKEN_META_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<IntegratedTokenInfo>;
+        if (parsed.symbol && typeof parsed.decimals === 'number') {
+          const resolvedSymbol =
+            !parsed.loadedFromChain && parsed.symbol === 'FEE'
+              ? FALLBACK_TOKEN_SYMBOL
+              : parsed.symbol;
+          memoryCachedTokenInfo = {
+            address: LAND_FEE_TOKEN_ADDRESS,
+            name: parsed.name || DEFAULT_INTEGRATED_TOKEN_INFO.name,
+            symbol: resolvedSymbol,
+            decimals: parsed.decimals,
+            loadedFromChain: Boolean(parsed.loadedFromChain),
+          };
+          return memoryCachedTokenInfo;
+        }
+      }
+    } catch {
+      // Ignore cache read error
+    }
+  }
+  return DEFAULT_INTEGRATED_TOKEN_INFO;
+}
+
+function saveCachedIntegratedTokenInfo(info: IntegratedTokenInfo): void {
+  memoryCachedTokenInfo = info;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(TOKEN_META_CACHE_KEY, JSON.stringify(info));
+      window.dispatchEvent(new Event('anagu-token-info-changed'));
+    } catch {
+      // Ignore storage error
+    }
+  }
+}
+
 export interface ContractRegistrySnapshot {
   chainId: string;
   feeTokenAddress: string;
@@ -106,6 +192,223 @@ export function getReadOnlyProvider(
   }
   return new ethers.JsonRpcProvider('http://127.0.0.1:8545');
 }
+
+function hasReachableProviderHint(eip1193Provider?: EthersEip1193Provider | null): boolean {
+  if (eip1193Provider) return true;
+  if (process.env.NEXT_PUBLIC_RPC_URL?.trim()) return true;
+  if (typeof window !== 'undefined') {
+    const win = window as unknown as { ethereum?: EthersEip1193Provider };
+    if (win.ethereum) return true;
+  }
+  return false;
+}
+
+export async function fetchIntegratedTokenInfo(
+  eip1193Provider?: EthersEip1193Provider | null,
+): Promise<IntegratedTokenInfo> {
+  const cached = getCachedIntegratedTokenInfo();
+  if (!hasReachableProviderHint(eip1193Provider)) {
+    return cached;
+  }
+
+  try {
+    const provider = getReadOnlyProvider(eip1193Provider);
+    const feeToken = new ethers.Contract(
+      LAND_FEE_TOKEN_ADDRESS,
+      LAND_FEE_TOKEN_ABI,
+      provider,
+    );
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Token metadata lookup timed out')), 4500);
+    });
+
+    const [nameRaw, symbolRaw, decimalsRaw] = await Promise.race([
+      Promise.all([
+        (feeToken.name() as Promise<string>).catch(() => cached.name),
+        feeToken.symbol() as Promise<string>,
+        (feeToken.decimals() as Promise<bigint>).catch(() => BigInt(cached.decimals)),
+      ]),
+      timeoutPromise,
+    ]);
+
+    const cleanSymbol = symbolRaw?.trim() || cached.symbol;
+    const cleanName = nameRaw?.trim() || cached.name;
+    const cleanDecimals = Number(decimalsRaw);
+
+    const next: IntegratedTokenInfo = {
+      address: LAND_FEE_TOKEN_ADDRESS,
+      name: cleanName,
+      symbol: cleanSymbol,
+      decimals: Number.isFinite(cleanDecimals) && cleanDecimals >= 0 ? cleanDecimals : 18,
+      loadedFromChain: true,
+    };
+    saveCachedIntegratedTokenInfo(next);
+    return next;
+  } catch {
+    return cached;
+  }
+}
+
+export async function fetchIntegratedTokenBalance(
+  eip1193Provider: EthersEip1193Provider,
+  ownerAddress: string,
+): Promise<IntegratedTokenBalance> {
+  const provider = getEthersBrowserProvider(eip1193Provider);
+  const [network, code] = await Promise.all([
+    provider.getNetwork(),
+    provider.getCode(LAND_FEE_TOKEN_ADDRESS),
+  ]);
+  if (!code || code === '0x') {
+    throw new Error(
+      `Token contract ${LAND_FEE_TOKEN_ADDRESS} is not deployed on Chain ID ${network.chainId.toString()}. Switch your wallet network.`,
+    );
+  }
+
+  const feeToken = new ethers.Contract(
+    LAND_FEE_TOKEN_ADDRESS,
+    LAND_FEE_TOKEN_ABI,
+    provider,
+  );
+  const cached = getCachedIntegratedTokenInfo();
+
+  const [balanceWei, decimalsRaw, symbolRaw, nameRaw] = await Promise.all([
+    feeToken.balanceOf(ownerAddress) as Promise<bigint>,
+    (feeToken.decimals() as Promise<bigint>).catch(() => BigInt(cached.decimals)),
+    (feeToken.symbol() as Promise<string>).catch(() => cached.symbol),
+    (feeToken.name() as Promise<string>).catch(() => cached.name),
+  ]);
+
+  const decimals = Number(decimalsRaw);
+  const symbol = symbolRaw?.trim() || cached.symbol;
+  const name = nameRaw?.trim() || cached.name;
+
+  saveCachedIntegratedTokenInfo({
+    address: LAND_FEE_TOKEN_ADDRESS,
+    name,
+    symbol,
+    decimals,
+    loadedFromChain: true,
+  });
+
+  return {
+    address: LAND_FEE_TOKEN_ADDRESS,
+    balanceWei,
+    balanceFormatted: ethers.formatUnits(balanceWei, decimals),
+    symbol,
+    name,
+    decimals,
+  };
+}
+
+function formatAmountForParseUnits(amount: number | string, decimals: number): string {
+  const safeDecimals = Math.min(Math.max(decimals, 0), 18);
+  if (typeof amount === 'string') {
+    const cleaned = amount.replace(/,/g, '').trim();
+    if (!cleaned || Number(cleaned) <= 0 || Number.isNaN(Number(cleaned))) {
+      return '0';
+    }
+    const parts = cleaned.split('.');
+    if (parts.length === 1) return parts[0];
+    return `${parts[0] || '0'}.${parts[1].slice(0, safeDecimals)}`.replace(/\.$/, '');
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return '0';
+  }
+  const fixed = amount.toFixed(Math.min(safeDecimals, 6));
+  return fixed.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+}
+
+export async function payLandWithIntegratedToken(
+  eip1193Provider: Eip1193ProviderLike,
+  params: {
+    recipientAddress?: string;
+    tokenAmount: number | string;
+    parcelRef?: string;
+  },
+): Promise<PayLandWithTokenResult> {
+  await eip1193Provider.request({ method: 'eth_requestAccounts' }).catch(() => undefined);
+
+  const provider = getEthersBrowserProvider(eip1193Provider);
+  const signer = await provider.getSigner();
+  const payer = await signer.getAddress();
+
+  const [network, contractCode] = await Promise.all([
+    provider.getNetwork(),
+    provider.getCode(LAND_FEE_TOKEN_ADDRESS),
+  ]);
+
+  if (!contractCode || contractCode === '0x') {
+    throw new Error(
+      `Your wallet is on Chain ID ${network.chainId.toString()}, where token contract ${LAND_FEE_TOKEN_ADDRESS} is not deployed. Switch your wallet to the network hosting your token and click Pay again.`,
+    );
+  }
+
+  const feeToken = new ethers.Contract(
+    LAND_FEE_TOKEN_ADDRESS,
+    LAND_FEE_TOKEN_ABI,
+    signer,
+  );
+  const cached = getCachedIntegratedTokenInfo();
+
+  const [decimalsRaw, symbolRaw, nameRaw] = await Promise.all([
+    (feeToken.decimals() as Promise<bigint>).catch(() => BigInt(cached.decimals)),
+    (feeToken.symbol() as Promise<string>).catch(() => cached.symbol),
+    (feeToken.name() as Promise<string>).catch(() => cached.name),
+  ]);
+
+  const decimals = Number(decimalsRaw);
+  const symbol = symbolRaw?.trim() || cached.symbol;
+  const name = nameRaw?.trim() || cached.name;
+
+  saveCachedIntegratedTokenInfo({
+    address: LAND_FEE_TOKEN_ADDRESS,
+    name,
+    symbol,
+    decimals,
+    loadedFromChain: true,
+  });
+
+  const amountString = formatAmountForParseUnits(params.tokenAmount, decimals);
+  const amountWei = ethers.parseUnits(amountString, decimals);
+  if (amountWei <= BigInt(0)) {
+    throw new Error(`Land purchase amount in ${symbol} must be greater than zero.`);
+  }
+
+  const currentBalance = (await feeToken.balanceOf(payer)) as bigint;
+  if (currentBalance < amountWei) {
+    const neededNum = Number(ethers.formatUnits(amountWei, decimals));
+    const heldNum = Number(ethers.formatUnits(currentBalance, decimals));
+    throw new Error(
+      `Insufficient ${symbol} balance on Chain ID ${network.chainId.toString()}. This parcel costs ${neededNum.toLocaleString()} ${symbol}, but your wallet holds ${heldNum.toLocaleString()} ${symbol}.`,
+    );
+  }
+
+  const recipient =
+    params.recipientAddress && ethers.isAddress(params.recipientAddress)
+      ? params.recipientAddress
+      : LAND_REGISTRY_ADDRESS;
+
+  const tx = (await feeToken.transfer(
+    recipient,
+    amountWei,
+  )) as ethers.ContractTransactionResponse;
+  const receipt = await tx.wait();
+
+  return {
+    txHash: receipt?.hash || tx.hash,
+    amountWei,
+    amountFormatted: ethers.formatUnits(amountWei, decimals),
+    symbol,
+    name,
+    decimals,
+    recipient,
+    payer,
+    tokenAddress: LAND_FEE_TOKEN_ADDRESS,
+  };
+}
+
+type Eip1193ProviderLike = EthersEip1193Provider;
 
 export function getContractInstances(runner: ContractRunner) {
   const feeToken = new ethers.Contract(

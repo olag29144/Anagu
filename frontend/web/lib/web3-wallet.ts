@@ -1,5 +1,9 @@
 import { ethers } from 'ethers';
-import { LAND_REGISTRY_ADDRESS } from './contracts';
+import {
+  LAND_FEE_TOKEN_ABI,
+  LAND_FEE_TOKEN_ADDRESS,
+  LAND_REGISTRY_ADDRESS,
+} from './contracts';
 import { formatContractError } from './ethers-contracts';
 
 export interface Eip1193Provider {
@@ -68,6 +72,12 @@ export interface ConnectedWalletState {
   chainId: string;
   chainName: string;
   balanceEth: string;
+  tokenSymbol: string;
+  tokenName: string;
+  tokenAddress: string;
+  tokenDecimals: number;
+  tokenBalance: string;
+  tokenDeployedOnChain: boolean;
   walletId: string;
   walletName: string;
   walletIcon?: string;
@@ -130,6 +140,101 @@ export function isIosDevice(): boolean {
   const ua = navigator.userAgent || '';
   if (/iPhone|iPad|iPod/i.test(ua)) return true;
   return typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1 && /Macintosh/i.test(ua);
+}
+
+export function isRunningInIframe(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
+export interface SwitchableNetworkOption {
+  chainId: string;
+  chainName: string;
+  rpcUrls?: string[];
+  nativeCurrency?: { name: string; symbol: string; decimals: number };
+  blockExplorerUrls?: string[];
+}
+
+export const COMMON_EVM_NETWORKS: SwitchableNetworkOption[] = [
+  {
+    chainId: '0xaa36a7',
+    chainName: 'Sepolia Testnet',
+    rpcUrls: ['https://rpc.sepolia.org'],
+    nativeCurrency: { name: 'SepoliaETH', symbol: 'ETH', decimals: 18 },
+    blockExplorerUrls: ['https://sepolia.etherscan.io'],
+  },
+  {
+    chainId: '0x1',
+    chainName: 'Ethereum Mainnet',
+  },
+  {
+    chainId: '0x89',
+    chainName: 'Polygon Mainnet',
+    rpcUrls: ['https://polygon-rpc.com'],
+    nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
+    blockExplorerUrls: ['https://polygonscan.com'],
+  },
+  {
+    chainId: '0x2105',
+    chainName: 'Base Mainnet',
+    rpcUrls: ['https://mainnet.base.org'],
+    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    blockExplorerUrls: ['https://basescan.org'],
+  },
+  {
+    chainId: '0x38',
+    chainName: 'BNB Smart Chain',
+    rpcUrls: ['https://bsc-dataseed.binance.org'],
+    nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+    blockExplorerUrls: ['https://bscscan.com'],
+  },
+  {
+    chainId: '0x539',
+    chainName: 'Anagu Besu / Local (1337)',
+    rpcUrls: ['http://127.0.0.1:8545'],
+    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+  },
+];
+
+export async function switchWalletNetwork(
+  provider: Eip1193Provider,
+  targetChainId: string,
+): Promise<string> {
+  const normalized = targetChainId.toLowerCase();
+  try {
+    await provider.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: normalized }],
+    });
+    return normalized;
+  } catch (err) {
+    const errCode = (err as { code?: number })?.code;
+    if (errCode === 4902) {
+      const preset = COMMON_EVM_NETWORKS.find(
+        (n) => n.chainId.toLowerCase() === normalized,
+      );
+      if (preset?.rpcUrls && preset.nativeCurrency) {
+        await provider.request({
+          method: 'wallet_addEthereumChain',
+          params: [
+            {
+              chainId: preset.chainId,
+              chainName: preset.chainName,
+              rpcUrls: preset.rpcUrls,
+              nativeCurrency: preset.nativeCurrency,
+              blockExplorerUrls: preset.blockExplorerUrls,
+            },
+          ],
+        });
+        return normalized;
+      }
+    }
+    throw err;
+  }
 }
 
 // ============================================================================
@@ -409,25 +514,67 @@ export function subscribeWalletDiscovery(
 
 export function mapWalletError(err: unknown): string {
   if (typeof err === 'object' && err !== null) {
-    const code = (err as { code?: number | string }).code;
+    const anyErr = err as { code?: number | string; message?: string; shortMessage?: string };
+    const code = anyErr.code;
     if (code === 4001 || code === 'ACTION_REJECTED') {
       return 'Wallet request was declined in your Web3 wallet.';
     }
     if (code === -32002) {
-      return 'A wallet approval prompt is already open. Please check your Web3 wallet extension or app.';
+      return 'A wallet approval prompt is already waiting in your Web3 wallet extension or app. Open your wallet icon to approve it.';
+    }
+    if (
+      code === 'BAD_DATA' ||
+      anyErr.message?.includes('could not decode result data') ||
+      anyErr.shortMessage?.includes('could not decode result data')
+    ) {
+      return 'Your connected wallet appears to be on a different blockchain network than your integrated token contract. Switch your wallet network to the chain where your token is deployed and try again.';
     }
   }
   return formatContractError(err);
 }
 
+const DEFAULT_LFEE_SYMBOL =
+  process.env.NEXT_PUBLIC_LAND_FEE_TOKEN_SYMBOL?.trim() || 'LFEE';
+
 /**
- * Connects to the selected wallet via ethers.js BrowserProvider (`eth_requestAccounts`).
+ * Prompts the connected Web3 wallet (EIP-747 `wallet_watchAsset`) to add/display the LFEE ERC-20 token.
+ */
+export async function watchLfeeTokenInWallet(
+  provider: Eip1193Provider,
+  options?: {
+    address?: string;
+    symbol?: string;
+    decimals?: number;
+  },
+): Promise<boolean> {
+  const tokenAddress = options?.address || LAND_FEE_TOKEN_ADDRESS;
+  const symbol = (options?.symbol?.trim() || DEFAULT_LFEE_SYMBOL).slice(0, 11);
+  const decimals = typeof options?.decimals === 'number' ? options.decimals : 18;
+
+  const result = await provider.request({
+    method: 'wallet_watchAsset',
+    params: {
+      type: 'ERC20',
+      options: {
+        address: tokenAddress,
+        symbol,
+        decimals,
+      },
+    },
+  });
+
+  return Boolean(result);
+}
+
+/**
+ * Connects to the selected wallet via EIP-1193 (`eth_requestAccounts`), reads the LFEE token
+ * contract (`LAND_FEE_TOKEN_ADDRESS`), and registers LFEE in the wallet UI where supported.
  */
 export async function connectWalletProvider(
   wallet: DetectedWalletProvider,
 ): Promise<ConnectedWalletState> {
+  await wallet.provider.request({ method: 'eth_requestAccounts' });
   const browserProvider = new ethers.BrowserProvider(wallet.provider);
-  await browserProvider.send('eth_requestAccounts', []);
   const signer = await browserProvider.getSigner();
   const address = await signer.getAddress();
 
@@ -447,11 +594,67 @@ export async function connectWalletProvider(
     // Ignore balance read failures on restricted RPCs
   }
 
+  let tokenSymbol = DEFAULT_LFEE_SYMBOL;
+  let tokenName = 'LandFeeToken';
+  let tokenDecimals = 18;
+  let tokenBalance = '0.0000';
+  let tokenDeployedOnChain = false;
+
+  try {
+    const code = await browserProvider.getCode(LAND_FEE_TOKEN_ADDRESS);
+    if (code && code !== '0x') {
+      tokenDeployedOnChain = true;
+      const feeToken = new ethers.Contract(
+        LAND_FEE_TOKEN_ADDRESS,
+        LAND_FEE_TOKEN_ABI,
+        browserProvider,
+      );
+      const [balWei, symRaw, nameRaw, decRaw] = await Promise.all([
+        feeToken.balanceOf(address) as Promise<bigint>,
+        (feeToken.symbol() as Promise<string>).catch(() => DEFAULT_LFEE_SYMBOL),
+        (feeToken.name() as Promise<string>).catch(() => 'LandFeeToken'),
+        (feeToken.decimals() as Promise<bigint>).catch(() => BigInt(18)),
+      ]);
+      tokenDecimals = Number(decRaw);
+      tokenSymbol = symRaw?.trim() || DEFAULT_LFEE_SYMBOL;
+      tokenName = nameRaw?.trim() || 'LandFeeToken';
+      const formatted = Number(ethers.formatUnits(balWei, tokenDecimals));
+      tokenBalance = Number.isFinite(formatted)
+        ? formatted.toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 4,
+          })
+        : '0.00';
+
+      if (typeof window !== 'undefined') {
+        const watchKey = `anagu_lfee_watched_${chainId.toLowerCase()}_${address.toLowerCase()}`;
+        if (!localStorage.getItem(watchKey)) {
+          localStorage.setItem(watchKey, '1');
+          void watchLfeeTokenInWallet(wallet.provider, {
+            address: LAND_FEE_TOKEN_ADDRESS,
+            symbol: tokenSymbol,
+            decimals: tokenDecimals,
+          }).catch(() => {
+            // Wallet declined or doesn't support EIP-747; connection stays active
+          });
+        }
+      }
+    }
+  } catch {
+    // Token contract lookup skipped or on a different chain; handled cleanly in UI
+  }
+
   return {
     address,
     chainId,
     chainName: getChainName(chainId),
     balanceEth,
+    tokenSymbol,
+    tokenName,
+    tokenAddress: LAND_FEE_TOKEN_ADDRESS,
+    tokenDecimals,
+    tokenBalance,
+    tokenDeployedOnChain,
     walletId: wallet.id,
     walletName: wallet.name,
     walletIcon: wallet.icon,
@@ -468,6 +671,8 @@ export async function signLandPurchaseAuthorization(
     areaSqm: number;
     priceNgn: number;
     priceUsd?: number;
+    priceToken?: number;
+    tokenSymbol?: string;
     buyerName: string;
     sellerWalletAddress?: string;
   },
@@ -481,7 +686,9 @@ export async function signLandPurchaseAuthorization(
     params.priceUsd && params.priceUsd > 0
       ? params.priceUsd
       : Math.round((params.priceNgn || 0) / 1600);
-  const ethAmount = resolvedUsd > 0 ? (resolvedUsd / 3200).toFixed(4) : '0.0000';
+  const resolvedToken =
+    params.priceToken && params.priceToken > 0 ? params.priceToken : resolvedUsd;
+  const symbol = params.tokenSymbol?.trim() || DEFAULT_LFEE_SYMBOL;
 
   const message = [
     'ANAGU STATUTORY LAND REGISTRY — PURCHASE AUTHORIZATION',
@@ -490,7 +697,7 @@ export async function signLandPurchaseAuthorization(
     `Parcel Title: ${params.landTitle}`,
     `Location: ${params.location}`,
     `Area: ${params.areaSqm.toLocaleString()} sqm`,
-    `Agreed Price: $${resolvedUsd.toLocaleString()} USD (${ethAmount} ETH)`,
+    `Agreed Price: ${resolvedToken.toLocaleString()} ${symbol} (≈ $${resolvedUsd.toLocaleString()} USD)`,
     `Buyer: ${params.buyerName}`,
     `Buyer Wallet: ${params.address}`,
     `Recipient / Escrow: ${recipientAddress}`,
@@ -511,6 +718,8 @@ export async function sendLandPurchaseTransaction(
     parcelRef: string;
     priceNgn: number;
     priceUsd?: number;
+    priceToken?: number;
+    tokenSymbol?: string;
     sellerWalletAddress?: string;
   },
 ): Promise<string> {
@@ -523,11 +732,13 @@ export async function sendLandPurchaseTransaction(
     params.priceUsd && params.priceUsd > 0
       ? params.priceUsd
       : Math.round((params.priceNgn || 0) / 1600);
-  const ethAmount = resolvedUsd > 0 ? (resolvedUsd / 3200).toFixed(4) : '0.0000';
+  const resolvedToken =
+    params.priceToken && params.priceToken > 0 ? params.priceToken : resolvedUsd;
+  const symbol = params.tokenSymbol?.trim() || DEFAULT_LFEE_SYMBOL;
 
   const dataHex = ethers.hexlify(
     ethers.toUtf8Bytes(
-      `anagu:purchase:${params.parcelRef}:usd:${resolvedUsd}:eth:${ethAmount}:${Date.now()}`,
+      `anagu:purchase:${params.parcelRef}:token:${resolvedToken}:${symbol}:usd:${resolvedUsd}:${Date.now()}`,
     ),
   );
 
@@ -550,12 +761,38 @@ export function buildEthereumIntentUri(): string {
 }
 
 /**
+ * Generates EIP-681 ERC-20 `transfer` URI so external/mobile wallets open pre-filled with the token transfer.
+ */
+export function buildErc20TransferIntentUri(params: {
+  tokenAddress: string;
+  recipientAddress?: string;
+  amountTokens: number;
+  decimals?: number;
+  chainIdHex?: string;
+}): string {
+  const recipient =
+    params.recipientAddress && ethers.isAddress(params.recipientAddress)
+      ? params.recipientAddress
+      : ANAGU_ESCROW_ADDRESS;
+  const decimals = typeof params.decimals === 'number' ? params.decimals : 18;
+  const amountStr = Number.isFinite(params.amountTokens) && params.amountTokens > 0
+    ? params.amountTokens.toFixed(Math.min(decimals, 6)).replace(/\.?0+$/, '')
+    : '0';
+  const amountWei = ethers.parseUnits(amountStr || '0', decimals).toString();
+  const chainSegment =
+    params.chainIdHex && parseInt(params.chainIdHex, 16) > 0
+      ? `@${parseInt(params.chainIdHex, 16)}`
+      : '';
+  return `ethereum:${params.tokenAddress}${chainSegment}/transfer?address=${recipient}&uint256=${amountWei}`;
+}
+
+/**
  * Triggers the device's registered `ethereum:` Web3 wallet handler via a non-navigating anchor click.
  */
-export function triggerDeviceEthereumWalletIntent(): void {
+export function triggerDeviceEthereumWalletIntent(customUri?: string): void {
   if (typeof document === 'undefined') return;
   const link = document.createElement('a');
-  link.href = buildEthereumIntentUri();
+  link.href = customUri || buildEthereumIntentUri();
   link.style.display = 'none';
   document.body.appendChild(link);
   link.click();

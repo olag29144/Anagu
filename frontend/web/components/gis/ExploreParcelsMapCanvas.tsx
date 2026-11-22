@@ -9,11 +9,10 @@ import {
   type OpenMapLayerId,
 } from '@/lib/openmap-tiles';
 import {
-  formatEthFromUsd,
-  formatUsd,
-  getListingPriceUsd,
+  formatListingTokenPrice,
   type LandListing,
 } from '@/lib/land-store';
+import { useIntegratedToken } from '@/lib/use-integrated-token';
 
 export interface MappableParcelItem {
   parcel: LandListing;
@@ -25,6 +24,7 @@ interface ExploreParcelsMapCanvasProps {
   layerId: OpenMapLayerId;
   activeParcelId: string | null;
   fitSignal: number;
+  tokenSymbol?: string;
   onSelectParcel: (parcel: LandListing) => void;
   onCursorMove?: (pt: LatLngPoint | null) => void;
 }
@@ -34,9 +34,12 @@ export default function ExploreParcelsMapCanvas({
   layerId,
   activeParcelId,
   fitSignal,
+  tokenSymbol: tokenSymbolProp,
   onSelectParcel,
   onCursorMove,
 }: ExploreParcelsMapCanvasProps) {
+  const { tokenInfo } = useIntegratedToken();
+  const activeSymbol = tokenSymbolProp || tokenInfo.symbol;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const baseLayerRef = useRef<L.LayerGroup | null>(null);
@@ -116,10 +119,9 @@ export default function ExploreParcelsMapCanvas({
         poly.addTo(overlay);
       }
 
-      const parcelUsd = getListingPriceUsd(parcel);
       const priceText = isSold
         ? 'SOLD'
-        : `${formatUsd(parcelUsd)} · ${formatEthFromUsd(parcelUsd, 2)}`;
+        : formatListingTokenPrice(parcel, activeSymbol);
       const badgeBg = isSold
         ? 'background:#1E293B;color:#FDA4AF;border:1px solid rgba(244,63,94,0.55);'
         : isActive
@@ -137,7 +139,7 @@ export default function ExploreParcelsMapCanvas({
       marker.on('click', () => onSelectRef.current(parcel));
       marker.addTo(overlay);
     });
-  }, [mappableParcels, activeParcelId]);
+  }, [mappableParcels, activeParcelId, activeSymbol]);
 
   // Fit bounds when parcel list changes or user clicks Fit All
   useEffect(() => {

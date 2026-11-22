@@ -12,14 +12,18 @@ import {
   getLandListings,
   updateLandListing,
   getListingPriceUsd,
+  getListingPriceToken,
+  tokenToUsd,
   formatFileSize,
   formatUsd,
-  formatEthFromUsd,
+  formatTokenAmount,
+  formatListingTokenPrice,
   NGN_PER_USD,
   type LandCategory,
   type LandDocument,
   type LandListing,
 } from '@/lib/land-store';
+import { useIntegratedToken } from '@/lib/use-integrated-token';
 import {
   getActiveUserAccount,
   ensureUserAccountForRegistration,
@@ -53,6 +57,8 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Compass,
   FileText,
   Image as ImageIcon,
@@ -115,11 +121,11 @@ const LAND_CATEGORIES: LandCategory[] = [
 ];
 
 const DOCUMENT_TYPES = [
+  'Registered Survey Plan',
   'Certificate of Occupancy (C of O)',
   "Governor's Consent",
   'Deed of Assignment',
   'Right of Occupancy (R of O)',
-  'Registered Survey Plan',
   'Excision / Gazette',
   'Family / Purchase Receipt',
   'Letter of Allocation',
@@ -135,31 +141,33 @@ const QUICK_SIZE_OPTIONS = [
   { label: '1 Acre', sqm: 4047 },
 ];
 
-type RegistrationStep = 1 | 2 | 3 | 4;
+type RegistrationStep = 1 | 2;
 type FormViewMode = 'guided' | 'all';
 
-const STEPS: Array<{ id: RegistrationStep; label: string; shortLabel: string }> = [
-  { id: 1, label: 'Your Contact', shortLabel: '1. Contact' },
-  { id: 2, label: 'Map & 4 Corners', shortLabel: '2. Map' },
-  { id: 3, label: 'Land Details', shortLabel: '3. Details' },
-  { id: 4, label: 'Documents & Submit', shortLabel: '4. Upload' },
-];
-
-function parseUsdInput(raw: string): number {
+function parseTokenInput(raw: string): number {
   const cleaned = raw.replace(/[^0-9.]/g, '');
   if (!cleaned) return 0;
   const parsed = Number(cleaned);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : 0;
+}
+
+function buildShortTitleFromLocation(rawAddress: string): string {
+  const firstSegment = rawAddress.split(',')[0]?.trim();
+  if (!firstSegment) return '';
+  return `Land at ${firstSegment}`.slice(0, 80);
 }
 
 export default function RegisterLandPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const errorAlertRef = useRef<HTMLDivElement | null>(null);
 
-  // View & Step state
+  // Simple 2-step flow (Step 1: Find Address & Draw on Map, Step 2: Details & Submit)
   const [viewMode, setViewMode] = useState<FormViewMode>('guided');
   const [activeStep, setActiveStep] = useState<RegistrationStep>(1);
+  const [showOptionalDetails, setShowOptionalDetails] = useState(false);
+  const [editingOwnerInline, setEditingOwnerInline] = useState(false);
 
-  // Owner & Contact Details (Email & ETH Wallet are optional so anyone with a phone can register)
+  // Owner & Contact Details (auto-filled when signed in)
   const [ownerName, setOwnerName] = useState('');
   const [ownerPhone, setOwnerPhone] = useState('');
   const [ownerEmail, setOwnerEmail] = useState('');
@@ -173,19 +181,21 @@ export default function RegisterLandPage() {
   const [mintingOnChain, setMintingOnChain] = useState(false);
   const [onChainMintError, setOnChainMintError] = useState<string | null>(null);
 
-  // Land Details
+  // Essential Land Details (location, state, areaSqm, title auto-filled from map when searched/drawn)
   const [title, setTitle] = useState('');
+  const [titleManuallyEdited, setTitleManuallyEdited] = useState(false);
   const [state, setState] = useState('Lagos State');
   const [location, setLocation] = useState('');
   const [category, setCategory] = useState<LandCategory>('Residential');
   const [areaSqm, setAreaSqm] = useState('');
-  const [documentType, setDocumentType] = useState('Certificate of Occupancy (C of O)');
+  const [documentType, setDocumentType] = useState('');
   const [documentNumber, setDocumentNumber] = useState('');
   const [coordinates, setCoordinates] = useState('');
   const [description, setDescription] = useState('');
 
+  const { tokenInfo } = useIntegratedToken(connectedProvider?.provider ?? null);
   const [forSale, setForSale] = useState(true);
-  const [priceUsdInput, setPriceUsdInput] = useState('');
+  const [priceTokenInput, setPriceTokenInput] = useState('');
 
   // GIS Spatial State
   const [existingParcels, setExistingParcels] = useState<LandListing[]>([]);
@@ -194,18 +204,17 @@ export default function RegisterLandPage() {
   const [gisPolygon, setGisPolygon] = useState<LatLngPoint[]>([]);
   const [gisPerimeterMeters, setGisPerimeterMeters] = useState<number | undefined>(undefined);
   const [gisMapImageUrl, setGisMapImageUrl] = useState<string | null>(null);
-  const [gisLayerId, setGisLayerId] = useState<OpenMapLayerId>('osm');
+  const [gisLayerId, setGisLayerId] = useState<OpenMapLayerId>('hybrid');
   const [gisResetSignal, setGisResetSignal] = useState(0);
 
-  // Uploaded documents (any file type accepted; optional if not on hand)
+  // Required land documents / photos
   const [documents, setDocuments] = useState<LandDocument[]>([]);
   const [dragActive, setDragActive] = useState(false);
 
-  // Form submission state
+  // Submission state
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [registeredLand, setRegisteredLand] = useState<LandListing | null>(null);
-
   const [activeUser, setActiveUser] = useState<ReturnType<typeof getActiveUserAccount>>(null);
 
   useEffect(() => {
@@ -232,6 +241,15 @@ export default function RegisterLandPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (error) {
+      errorAlertRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [error]);
+
+  const titleManuallyEditedRef = useRef(titleManuallyEdited);
+  titleManuallyEditedRef.current = titleManuallyEdited;
+
   const handleGisChange = useCallback((payload: GisMeasurementPayload) => {
     if (payload.areaSqm && payload.areaSqm > 0) {
       setAreaSqm(String(payload.areaSqm));
@@ -250,6 +268,10 @@ export default function RegisterLandPage() {
 
     if (payload.suggestedLocation) {
       setLocation(payload.suggestedLocation);
+      if (!titleManuallyEditedRef.current) {
+        const suggested = buildShortTitleFromLocation(payload.suggestedLocation);
+        if (suggested) setTitle(suggested);
+      }
     }
     if (payload.suggestedState) {
       setState(payload.suggestedState);
@@ -351,7 +373,7 @@ export default function RegisterLandPage() {
   const handleAutoFillWallet = async () => {
     setError(null);
     setWalletModalError(null);
-    const wallets = await discoverAllWallets(300);
+    const wallets = await discoverAllWallets(350);
     setDetectedWallets(wallets);
 
     if (wallets.length === 1) {
@@ -368,7 +390,7 @@ export default function RegisterLandPage() {
   const handleRegisterOnChain = async () => {
     if (!registeredLand) return;
     setOnChainMintError(null);
-    const wallets = await discoverAllWallets(300);
+    const wallets = await discoverAllWallets(350);
     setDetectedWallets(wallets);
     const walletToUse = connectedProvider ?? wallets[0];
 
@@ -419,99 +441,76 @@ export default function RegisterLandPage() {
     }
   };
 
-  const handleNextFromStep1 = () => {
-    if (!ownerName.trim()) {
-      setError('Please enter your full name or company name.');
-      return;
-    }
-    if (!ownerPhone.trim()) {
-      setError('Please enter a phone number so buyers or officials can reach you.');
-      return;
-    }
-    if (ownerEmail.trim() && !ownerEmail.includes('@')) {
-      setError('Please enter a valid email address or leave the email box empty.');
-      return;
-    }
-    if (ownerWalletAddress.trim() && !isValidEthAddress(ownerWalletAddress)) {
-      setError(
-        'Please enter a valid 42-character ETH wallet address starting with 0x, or leave it blank.',
-      );
-      return;
-    }
-    goToStep(2);
-  };
-
-  const handleNextFromStep3 = () => {
-    if (!title.trim()) {
-      setError('Please give your land a short title or name.');
-      return;
-    }
-    if (!location.trim()) {
-      setError('Please enter the land location or street address.');
-      return;
-    }
-    const parsedArea = Number(areaSqm);
-    if (!parsedArea || parsedArea <= 0) {
-      setError('Please enter the land size in square meters (or tap a plot size button).');
-      return;
-    }
-    const parsedPriceUsd = forSale ? parseUsdInput(priceUsdInput) : 0;
-    if (forSale && (!parsedPriceUsd || parsedPriceUsd <= 0)) {
-      setError('Please enter your asking price in USD ($), or uncheck "List this land for sale".');
-      return;
-    }
-    goToStep(4);
-  };
-
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
 
+    if (!location.trim()) {
+      setError('Please enter the land address or search for it on the map.');
+      if (viewMode === 'guided') setActiveStep(2);
+      return;
+    }
+
+    const resolvedTitle = title.trim() || buildShortTitleFromLocation(location);
+    if (!resolvedTitle) {
+      setError('Please enter a short name or title for this land.');
+      if (viewMode === 'guided') setActiveStep(2);
+      return;
+    }
+
+    const parsedArea = Number(areaSqm);
+    if (!parsedArea || parsedArea <= 0) {
+      setError('Please draw the land on the map or pick a plot size (sqm).');
+      if (viewMode === 'guided') setActiveStep(2);
+      return;
+    }
+
+    const parsedPriceToken = forSale ? parseTokenInput(priceTokenInput) : 0;
+    if (forSale && (!parsedPriceToken || parsedPriceToken <= 0)) {
+      setError(
+        `Please enter your asking price in ${tokenInfo.symbol} tokens, or uncheck "List this land for sale".`,
+      );
+      if (viewMode === 'guided') setActiveStep(2);
+      return;
+    }
+
+    if (!documentType.trim()) {
+      setError('Please select the land paper / title type.');
+      if (viewMode === 'guided') setActiveStep(2);
+      return;
+    }
+
+    if (documents.length === 0) {
+      setError('Please upload at least one land document or photo.');
+      if (viewMode === 'guided') setActiveStep(2);
+      return;
+    }
+
     if (!ownerName.trim()) {
-      setError('Please enter your full name or company name.');
-      if (viewMode === 'guided') setActiveStep(1);
+      setError('Please enter your full name.');
+      setEditingOwnerInline(true);
+      if (viewMode === 'guided') setActiveStep(2);
       return;
     }
     if (!ownerPhone.trim()) {
       setError('Please enter a contact phone number.');
-      if (viewMode === 'guided') setActiveStep(1);
+      setEditingOwnerInline(true);
+      if (viewMode === 'guided') setActiveStep(2);
       return;
     }
-    if (ownerEmail.trim() && !ownerEmail.includes('@')) {
-      setError('Please enter a valid email address or leave email blank.');
-      if (viewMode === 'guided') setActiveStep(1);
+    if (!ownerEmail.trim() || !ownerEmail.includes('@')) {
+      setError('Please enter a valid email address.');
+      if (viewMode === 'guided') setActiveStep(2);
       return;
     }
     if (ownerWalletAddress.trim() && !isValidEthAddress(ownerWalletAddress)) {
-      setError(
-        'Please enter a valid 42-character ETH wallet address starting with 0x, or leave it blank.',
-      );
-      if (viewMode === 'guided') setActiveStep(1);
-      return;
-    }
-    if (!title.trim()) {
-      setError('Please enter a title or name for the land.');
-      if (viewMode === 'guided') setActiveStep(3);
-      return;
-    }
-    if (!location.trim()) {
-      setError('Please enter the land location or address.');
-      if (viewMode === 'guided') setActiveStep(3);
-      return;
-    }
-    const parsedArea = Number(areaSqm);
-    if (!parsedArea || parsedArea <= 0) {
-      setError('Please enter a valid land size in square meters (sqm) or pick a plot preset.');
-      if (viewMode === 'guided') setActiveStep(3);
-      return;
-    }
-    const parsedPriceUsd = forSale ? parseUsdInput(priceUsdInput) : 0;
-    if (forSale && (!parsedPriceUsd || parsedPriceUsd <= 0)) {
-      setError('Please enter an asking price in USD ($), or switch off "List this land for sale".');
-      if (viewMode === 'guided') setActiveStep(3);
+      setError('Please enter a valid 42-character 0x LFEE wallet address, or leave it blank.');
+      setShowOptionalDetails(true);
+      if (viewMode === 'guided') setActiveStep(2);
       return;
     }
 
+    const parsedPriceUsd = forSale ? tokenToUsd(parsedPriceToken) : 0;
     setSubmitting(true);
 
     let resolvedMapImageUrl = gisMapImageUrl;
@@ -549,9 +548,9 @@ export default function RegisterLandPage() {
 
     const created = addLandListing({
       userId: userAccount.id,
-      title: title.trim(),
+      title: resolvedTitle,
       ownerName: ownerName.trim(),
-      ownerEmail: ownerEmail.trim() || 'Not provided',
+      ownerEmail: ownerEmail.trim(),
       ownerPhone: ownerPhone.trim(),
       ownerWalletAddress: ownerWalletAddress.trim() || undefined,
       state,
@@ -561,6 +560,8 @@ export default function RegisterLandPage() {
       documentType,
       documentNumber: documentNumber.trim() || 'Pending Reference',
       priceUsd: parsedPriceUsd,
+      priceToken: parsedPriceToken,
+      tokenSymbol: tokenInfo.symbol,
       priceNgn: parsedPriceUsd * NGN_PER_USD,
       forSale,
       saleStatus: forSale ? 'available' : 'not_for_sale',
@@ -585,14 +586,15 @@ export default function RegisterLandPage() {
   const handleReset = () => {
     setRegisteredLand(null);
     setActiveStep(1);
-    setOwnerWalletAddress('');
     setTitle('');
+    setTitleManuallyEdited(false);
     setLocation('');
     setAreaSqm('');
+    setDocumentType('');
     setDocumentNumber('');
     setCoordinates('');
     setDescription('');
-    setPriceUsdInput('');
+    setPriceTokenInput('');
     setDocuments([]);
     setGisLat(undefined);
     setGisLng(undefined);
@@ -603,27 +605,24 @@ export default function RegisterLandPage() {
     setError(null);
   };
 
-  const step1Complete = Boolean(ownerName.trim() && ownerPhone.trim());
-  const step2Complete = gisPolygon.length >= 3 || Boolean(gisLat !== undefined && gisLng !== undefined);
-  const step3Complete = Boolean(
-    title.trim() &&
-      location.trim() &&
+  const mapLocatedOrDrawn =
+    gisPolygon.length >= 3 || Boolean(gisLat !== undefined && gisLng !== undefined);
+  const detailsComplete = Boolean(
+    location.trim() &&
       Number(areaSqm) > 0 &&
-      (!forSale || parseUsdInput(priceUsdInput) > 0),
+      documentType.trim() &&
+      documents.length > 0 &&
+      ownerName.trim() &&
+      ownerPhone.trim() &&
+      ownerEmail.trim().includes('@') &&
+      (!forSale || parseTokenInput(priceTokenInput) > 0),
   );
-  const step4Complete = documents.length > 0;
-
-  const isStepDone = (stepId: RegistrationStep) => {
-    if (stepId === 1) return step1Complete;
-    if (stepId === 2) return step2Complete;
-    if (stepId === 3) return step3Complete;
-    return step4Complete;
-  };
+  const hasSignedInContact = Boolean(ownerName.trim() && ownerPhone.trim());
 
   const numericArea = Number(areaSqm);
-  const areaEquivalents =
-    numericArea > 0 ? formatPlotEquivalents(numericArea) : null;
-  const numericPriceUsd = parseUsdInput(priceUsdInput);
+  const areaEquivalents = numericArea > 0 ? formatPlotEquivalents(numericArea) : null;
+  const numericPriceToken = parseTokenInput(priceTokenInput);
+  const numericPriceUsd = tokenToUsd(numericPriceToken);
 
   return (
     <div className="min-h-screen bg-[#020305] text-[#F4F7FB] flex flex-col">
@@ -656,7 +655,7 @@ export default function RegisterLandPage() {
                 Register Your Land
               </h1>
               <p className="mt-2 text-sm sm:text-base text-[#94A3B8] max-w-2xl">
-                Simple for every landowner — follow the 4 quick steps below or switch to the full form to enter everything at once.
+                Search your land&apos;s address, draw its boundary directly on the GIS map, and set your price — most fields fill automatically.
               </p>
             </div>
 
@@ -672,7 +671,7 @@ export default function RegisterLandPage() {
                   }`}
                 >
                   <ListChecks className="h-3.5 w-3.5" />
-                  <span>Step-by-Step (Easy)</span>
+                  <span>2-Step Easy</span>
                 </button>
                 <button
                   type="button"
@@ -684,7 +683,7 @@ export default function RegisterLandPage() {
                   }`}
                 >
                   <Layers className="h-3.5 w-3.5" />
-                  <span>Full Form</span>
+                  <span>All on 1 Page</span>
                 </button>
               </div>
             )}
@@ -721,14 +720,15 @@ export default function RegisterLandPage() {
                       </span>
                       <div className="text-right shrink-0">
                         {(() => {
+                          const tokenAmt = getListingPriceToken(registeredLand);
                           const usd = getListingPriceUsd(registeredLand);
-                          return registeredLand.forSale && usd > 0 ? (
+                          return registeredLand.forSale && tokenAmt > 0 ? (
                             <>
-                              <p className="font-mono font-bold text-emerald-400 tabular-nums">
-                                {formatUsd(usd)}
+                              <p className="font-mono font-bold text-[#67E8F9] tabular-nums">
+                                {formatListingTokenPrice(registeredLand, tokenInfo.symbol)}
                               </p>
-                              <p className="font-mono text-[11px] text-[#38BDF8] tabular-nums">
-                                {formatEthFromUsd(usd)}
+                              <p className="font-mono text-[11px] text-[#94A3B8] tabular-nums">
+                                ≈ {formatUsd(usd)}
                               </p>
                             </>
                           ) : (
@@ -743,18 +743,21 @@ export default function RegisterLandPage() {
                 <div className="inline-block rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] px-4 py-2 font-mono text-xs text-[#38BDF8]">
                   Parcel Reference: {registeredLand.parcelRef}
                 </div>
-                {registeredLand.forSale && getListingPriceUsd(registeredLand) > 0 && (
-                  <div className="inline-flex flex-wrap items-center justify-center gap-2 rounded-lg bg-[#05080D] border border-emerald-500/35 px-4 py-1.5 font-mono text-sm font-bold text-emerald-400 tabular-nums">
-                    <span>Asking Price: {formatUsd(getListingPriceUsd(registeredLand))}</span>
+                {registeredLand.forSale && getListingPriceToken(registeredLand) > 0 && (
+                  <div className="inline-flex flex-wrap items-center justify-center gap-2 rounded-lg bg-[#05080D] border border-emerald-500/35 px-4 py-1.5 font-mono text-sm font-bold text-[#67E8F9] tabular-nums">
+                    <span>
+                      Asking Price:{' '}
+                      {formatListingTokenPrice(registeredLand, tokenInfo.symbol)}
+                    </span>
                     <span className="text-[#475569]">·</span>
-                    <span className="text-[#38BDF8]">
-                      {formatEthFromUsd(getListingPriceUsd(registeredLand))}
+                    <span className="text-[#94A3B8]">
+                      ≈ {formatUsd(getListingPriceUsd(registeredLand))}
                     </span>
                   </div>
                 )}
                 {registeredLand.ownerWalletAddress && (
                   <div className="inline-block rounded-lg bg-[#05080D] border border-emerald-500/30 px-4 py-1.5 font-mono text-xs text-emerald-400">
-                    ETH Wallet Linked: {registeredLand.ownerWalletAddress}
+                    {tokenInfo.symbol} Wallet Linked: {registeredLand.ownerWalletAddress}
                   </div>
                 )}
                 {registeredLand.onChainTxHash ? (
@@ -821,45 +824,53 @@ export default function RegisterLandPage() {
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Clickable 4-Step Progress Bar (visible in Step-by-Step mode) */}
+              {/* Clickable 2-Step Bar */}
               {viewMode === 'guided' && (
                 <nav
                   aria-label="Registration steps"
-                  className="grid grid-cols-2 sm:grid-cols-4 gap-2"
+                  className="grid grid-cols-2 gap-2.5"
                 >
-                  {STEPS.map((step) => {
-                    const isActive = activeStep === step.id;
-                    const done = isStepDone(step.id);
-                    return (
-                      <button
-                        key={step.id}
-                        type="button"
-                        onClick={() => goToStep(step.id)}
-                        className={`h-11 px-3 rounded-[10px] border text-left flex items-center justify-between gap-2 transition-colors ${
-                          isActive
-                            ? 'bg-[#38BDF8]/15 border-[#38BDF8] text-[#F4F7FB]'
-                            : done
-                              ? 'bg-[#0A0F16] border-emerald-500/35 text-[#E2E8F0] hover:border-[#38BDF8]/50'
-                              : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
-                        }`}
-                      >
-                        <span className="text-xs font-medium truncate">
-                          {step.shortLabel}
-                        </span>
-                        {done ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                        ) : (
-                          <span
-                            className={`text-[11px] font-mono shrink-0 ${
-                              isActive ? 'text-[#38BDF8]' : 'text-[#64748B]'
-                            }`}
-                          >
-                            {step.id}/4
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+                  <button
+                    type="button"
+                    onClick={() => goToStep(1)}
+                    className={`h-11 px-4 rounded-[10px] border text-left flex items-center justify-between gap-2 transition-colors ${
+                      activeStep === 1
+                        ? 'bg-[#38BDF8]/15 border-[#38BDF8] text-[#F4F7FB]'
+                        : mapLocatedOrDrawn
+                          ? 'bg-[#0A0F16] border-emerald-500/35 text-[#E2E8F0] hover:border-[#38BDF8]/50'
+                          : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
+                    }`}
+                  >
+                    <span className="text-xs sm:text-sm font-medium truncate">
+                      1. Find Address &amp; Draw Land
+                    </span>
+                    {mapLocatedOrDrawn ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <span className="text-[11px] font-mono text-[#38BDF8] shrink-0">1/2</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => goToStep(2)}
+                    className={`h-11 px-4 rounded-[10px] border text-left flex items-center justify-between gap-2 transition-colors ${
+                      activeStep === 2
+                        ? 'bg-[#38BDF8]/15 border-[#38BDF8] text-[#F4F7FB]'
+                        : detailsComplete
+                          ? 'bg-[#0A0F16] border-emerald-500/35 text-[#E2E8F0] hover:border-[#38BDF8]/50'
+                          : 'bg-[#0A0F16] border-[rgba(91,133,167,0.22)] text-[#94A3B8] hover:text-[#F4F7FB]'
+                    }`}
+                  >
+                    <span className="text-xs sm:text-sm font-medium truncate">
+                      2. Confirm Details, Price &amp; Submit
+                    </span>
+                    {detailsComplete ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <span className="text-[11px] font-mono text-[#64748B] shrink-0">2/2</span>
+                    )}
+                  </button>
                 </nav>
               )}
 
@@ -870,6 +881,7 @@ export default function RegisterLandPage() {
               >
                 {error && (
                   <div
+                    ref={errorAlertRef}
                     role="alert"
                     className="rounded-[8px] bg-rose-950/30 border border-rose-500/40 px-4 py-3 text-xs text-rose-300 flex items-start gap-2.5"
                   >
@@ -878,134 +890,21 @@ export default function RegisterLandPage() {
                   </div>
                 )}
 
-                {/* STEP 1: Owner Contact Details */}
+                {/* STEP 1: Search Address & Draw Land on GIS Map */}
                 <fieldset
                   className={
-                    viewMode === 'all' || activeStep === 1 ? 'space-y-5' : 'hidden'
-                  }
-                >
-                  <div className="pb-3 border-b border-[rgba(91,133,167,0.16)] flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4 text-[#38BDF8]" />
-                      <legend className="text-base font-semibold text-[#F4F7FB]">
-                        1. Owner / Seller Contact Details
-                      </legend>
-                    </div>
-                    <span className="text-xs text-[#64748B]">Only Name &amp; Phone required</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label htmlFor="ownerName" className="block text-xs text-[#94A3B8] mb-1.5">
-                        Full Name or Company Name *
-                      </label>
-                      <input
-                        id="ownerName"
-                        type="text"
-                        required
-                        value={ownerName}
-                        onChange={(e) => setOwnerName(e.target.value)}
-                        placeholder="e.g. Babatunde Adeleke"
-                        className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="ownerPhone" className="block text-xs text-[#94A3B8] mb-1.5">
-                        Phone Number *
-                      </label>
-                      <input
-                        id="ownerPhone"
-                        type="tel"
-                        required
-                        value={ownerPhone}
-                        onChange={(e) => setOwnerPhone(e.target.value)}
-                        placeholder="e.g. 0803 123 4567"
-                        className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="ownerEmail" className="block text-xs text-[#94A3B8] mb-1.5">
-                        Email Address (Optional)
-                      </label>
-                      <input
-                        id="ownerEmail"
-                        type="email"
-                        value={ownerEmail}
-                        onChange={(e) => setOwnerEmail(e.target.value)}
-                        placeholder="name@example.com"
-                        className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  {/* ETH Wallet Address Field */}
-                  <div className="pt-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                      <label htmlFor="ownerWalletAddress" className="text-xs text-[#94A3B8] flex items-center gap-1.5">
-                        <Wallet className="h-3.5 w-3.5 text-[#38BDF8]" />
-                        <span>ETH Wallet Address (Optional — for on-chain title &amp; Web3 payments)</span>
-                      </label>
-                      <button
-                        type="button"
-                        disabled={connectingWallet}
-                        onClick={() => void handleAutoFillWallet()}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#38BDF8] text-[#020305] text-[11px] font-semibold hover:bg-[#67E8F9] disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
-                      >
-                        {connectingWallet ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Wallet className="h-3 w-3" />
-                        )}
-                        <span>
-                          {connectingWallet ? 'Connecting Wallet…' : 'Connect Wallet'}
-                        </span>
-                      </button>
-                    </div>
-                    <input
-                      id="ownerWalletAddress"
-                      type="text"
-                      value={ownerWalletAddress}
-                      onChange={(e) => setOwnerWalletAddress(e.target.value)}
-                      placeholder="0x71C83812a19f20108A456789b910123456789012"
-                      spellCheck={false}
-                      className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
-                    />
-                    {ownerWalletAddress.trim() && isValidEthAddress(ownerWalletAddress) && (
-                      <p className="mt-1 text-[11px] font-mono text-emerald-400">
-                        Valid Ethereum (ERC-721 / Web3) wallet address
-                      </p>
-                    )}
-                  </div>
-
-                  {viewMode === 'guided' && (
-                    <div className="pt-2 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleNextFromStep1}
-                        className="h-11 px-6 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] inline-flex items-center gap-2 transition-colors whitespace-nowrap"
-                      >
-                        <span>Continue to Map &amp; Corners</span>
-                        <ArrowRight className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-                </fieldset>
-
-                {/* STEP 2: Interactive GIS Map (Always mounted to preserve map state!) */}
-                <fieldset
-                  className={
-                    viewMode === 'all' || activeStep === 2 ? 'space-y-4' : 'hidden'
+                    viewMode === 'all' || activeStep === 1 ? 'space-y-4' : 'hidden'
                   }
                 >
                   <div className="pb-3 border-b border-[rgba(91,133,167,0.16)] flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Compass className="h-4 w-4 text-[#38BDF8]" />
                       <legend className="text-base font-semibold text-[#F4F7FB]">
-                        2. Locate &amp; Mark Land on Map
+                        1. Search Address &amp; Draw Land on Map
                       </legend>
                     </div>
                     <span className="text-xs text-[#94A3B8]">
-                      Optional — auto-fills Land Size &amp; Coordinates into Step 3
+                      Auto-fills Address, State, Size &amp; Map Photo
                     </span>
                   </div>
 
@@ -1014,61 +913,150 @@ export default function RegisterLandPage() {
                     parcelTitle={title}
                     onGisChange={handleGisChange}
                     resetSignal={gisResetSignal}
-                    isVisible={viewMode === 'all' || activeStep === 2}
+                    isVisible={viewMode === 'all' || activeStep === 1}
                   />
 
                   {viewMode === 'guided' && (
-                    <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+                    <div className="pt-2 flex justify-end">
                       <button
                         type="button"
-                        onClick={() => goToStep(1)}
-                        className="h-11 px-5 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-sm font-medium text-[#E2E8F0] hover:border-[#38BDF8] inline-flex items-center gap-2 whitespace-nowrap"
-                      >
-                        <ArrowLeft className="h-4 w-4" />
-                        <span>Back</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => goToStep(3)}
+                        onClick={() => goToStep(2)}
                         className="h-11 px-6 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] inline-flex items-center gap-2 transition-colors whitespace-nowrap"
                       >
-                        <span>{step2Complete ? 'Continue to Land Details' : 'Skip Map / Enter Details Manually'}</span>
+                        <span>
+                          {mapLocatedOrDrawn
+                            ? 'Continue to Title & Price'
+                            : 'Skip Map & Enter Details'}
+                        </span>
                         <ArrowRight className="h-4 w-4" />
                       </button>
                     </div>
                   )}
                 </fieldset>
 
-                {/* STEP 3: Land Details & Price */}
+                {/* STEP 2: Essential Details & Publish */}
                 <fieldset
                   className={
-                    viewMode === 'all' || activeStep === 3 ? 'space-y-5' : 'hidden'
+                    viewMode === 'all' || activeStep === 2 ? 'space-y-5' : 'hidden'
                   }
                 >
                   <div className="pb-3 border-b border-[rgba(91,133,167,0.16)] flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-[#38BDF8]" />
                       <legend className="text-base font-semibold text-[#F4F7FB]">
-                        3. Land Details &amp; Pricing
+                        2. Land Title, Size &amp; Asking Price
                       </legend>
                     </div>
                     <span className="text-xs text-[#64748B]">
-                      Fields from the map are already pre-filled if you marked them
+                      Fields from the map are pre-filled
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="landTitle" className="block text-xs text-[#94A3B8] mb-1.5">
-                        Land Name / Title *
+                  {/* Owner Contact: Name, Phone, Required Email */}
+                  {hasSignedInContact && !editingOwnerInline ? (
+                    <div className="space-y-4 pb-4 border-b border-[rgba(91,133,167,0.14)]">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2 text-[#94A3B8]">
+                          <User className="h-3.5 w-3.5 text-[#38BDF8] shrink-0" />
+                          <span>
+                            Registering as{' '}
+                            <strong className="text-[#F4F7FB]">{ownerName}</strong> ·{' '}
+                            <span className="font-mono text-[#E2E8F0]">{ownerPhone}</span>
+                            {ownerWalletAddress.trim() && (
+                              <>
+                                {' '}
+                                ·{' '}
+                                <span className="font-mono text-[#38BDF8]">
+                                  {ownerWalletAddress.slice(0, 6)}…{ownerWalletAddress.slice(-4)}
+                                </span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEditingOwnerInline(true)}
+                          className="text-xs text-[#38BDF8] hover:underline whitespace-nowrap"
+                        >
+                          Change Contact
+                        </button>
+                      </div>
+
+                      <div>
+                        <label htmlFor="ownerEmail" className="block text-xs text-[#94A3B8] mb-1.5">
+                          Email Address *
+                        </label>
+                        <input
+                          id="ownerEmail"
+                          type="email"
+                          required
+                          value={ownerEmail}
+                          onChange={(e) => setOwnerEmail(e.target.value)}
+                          placeholder="name@example.com"
+                          className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pb-4 border-b border-[rgba(91,133,167,0.14)]">
+                      <div>
+                        <label htmlFor="ownerName" className="block text-xs text-[#94A3B8] mb-1.5">
+                          Your Full Name or Company *
+                        </label>
+                        <input
+                          id="ownerName"
+                          type="text"
+                          required
+                          value={ownerName}
+                          onChange={(e) => setOwnerName(e.target.value)}
+                          placeholder="e.g. Babatunde Adeleke"
+                          className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="ownerPhone" className="block text-xs text-[#94A3B8] mb-1.5">
+                          Phone Number *
+                        </label>
+                        <input
+                          id="ownerPhone"
+                          type="tel"
+                          required
+                          value={ownerPhone}
+                          onChange={(e) => setOwnerPhone(e.target.value)}
+                          placeholder="e.g. 0803 123 4567"
+                          className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="ownerEmail" className="block text-xs text-[#94A3B8] mb-1.5">
+                          Email Address *
+                        </label>
+                        <input
+                          id="ownerEmail"
+                          type="email"
+                          required
+                          value={ownerEmail}
+                          onChange={(e) => setOwnerEmail(e.target.value)}
+                          placeholder="name@example.com"
+                          className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Essential Land Inputs: Address, State, Land Title */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="sm:col-span-2">
+                      <label htmlFor="location" className="block text-xs text-[#94A3B8] mb-1.5">
+                        Land Address / Neighborhood *
                       </label>
                       <input
-                        id="landTitle"
+                        id="location"
                         type="text"
                         required
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        placeholder="e.g. 1 Plot of Land at Lekki Phase 1"
+                        value={location}
+                        onChange={(e) => setLocation(e.target.value)}
+                        placeholder="Auto-filled from map, or type street / LGA"
                         className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                       />
                     </div>
@@ -1091,29 +1079,28 @@ export default function RegisterLandPage() {
                     </div>
                   </div>
 
-                  <div>
-                    <label htmlFor="location" className="block text-xs text-[#94A3B8] mb-1.5">
-                      Full Address / Town / LGA *
-                    </label>
-                    <div className="relative">
-                      <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#526174]" />
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+                    <div>
+                      <label htmlFor="landTitle" className="block text-xs text-[#94A3B8] mb-1.5">
+                        Land Name / Title *
+                      </label>
                       <input
-                        id="location"
+                        id="landTitle"
                         type="text"
                         required
-                        value={location}
-                        onChange={(e) => setLocation(e.target.value)}
-                        placeholder="e.g. Off Admiralty Way, Lekki Phase 1, Eti-Osa LGA"
-                        className="w-full h-11 pl-10 pr-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                        value={title}
+                        onChange={(e) => {
+                          setTitleManuallyEdited(true);
+                          setTitle(e.target.value);
+                        }}
+                        placeholder="e.g. Plot at Lekki Phase 1"
+                        className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                       />
                     </div>
-                  </div>
 
-                  {/* Category + Land Size with Plot Quick Buttons */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-start">
-                    <div className="sm:col-span-4">
+                    <div>
                       <label htmlFor="category" className="block text-xs text-[#94A3B8] mb-1.5">
-                        Land Use / Category *
+                        Land Use *
                       </label>
                       <select
                         id="category"
@@ -1129,7 +1116,7 @@ export default function RegisterLandPage() {
                       </select>
                     </div>
 
-                    <div className="sm:col-span-4">
+                    <div>
                       <label htmlFor="areaSqm" className="block text-xs text-[#94A3B8] mb-1.5">
                         Land Size (sqm) *
                       </label>
@@ -1140,34 +1127,20 @@ export default function RegisterLandPage() {
                         required
                         value={areaSqm}
                         onChange={(e) => setAreaSqm(e.target.value)}
-                        placeholder="e.g. 648"
+                        placeholder="Measured from map"
                         className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono tabular-nums text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                       />
                       {areaEquivalents && (
                         <p className="mt-1 text-[11px] font-mono text-[#38BDF8] tabular-nums">
-                          ≈ {areaEquivalents.standardPlots648} standard plots · {areaEquivalents.hectares} ha
+                          ≈ {areaEquivalents.standardPlots648} plots · {areaEquivalents.hectares} ha
                         </p>
                       )}
                     </div>
-
-                    <div className="sm:col-span-4">
-                      <label htmlFor="coordinates" className="block text-xs text-[#94A3B8] mb-1.5">
-                        GPS Coordinates (Optional)
-                      </label>
-                      <input
-                        id="coordinates"
-                        type="text"
-                        value={coordinates}
-                        onChange={(e) => setCoordinates(e.target.value)}
-                        placeholder="Auto-filled from map"
-                        className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
-                      />
-                    </div>
                   </div>
 
-                  {/* Quick Tap Plot Sizes */}
+                  {/* Quick Plot Size Tap Row */}
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-[#64748B]">Quick Size Select:</span>
+                    <span className="text-xs text-[#64748B]">Quick Size:</span>
                     {QUICK_SIZE_OPTIONS.map((opt) => (
                       <button
                         key={opt.label}
@@ -1184,17 +1157,22 @@ export default function RegisterLandPage() {
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Required Land Paper / Title Type & Document Upload */}
+                  <div className="pt-4 border-t border-[rgba(91,133,167,0.16)] space-y-4">
                     <div>
                       <label htmlFor="documentType" className="block text-xs text-[#94A3B8] mb-1.5">
-                        Land Paper / Title Type
+                        Land Paper / Title Type *
                       </label>
                       <select
                         id="documentType"
+                        required
                         value={documentType}
                         onChange={(e) => setDocumentType(e.target.value)}
                         className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
                       >
+                        <option value="" disabled className="bg-[#0A0F16]">
+                          Select land paper / title type…
+                        </option>
                         {DOCUMENT_TYPES.map((dt) => (
                           <option key={dt} value={dt} className="bg-[#0A0F16]">
                             {dt}
@@ -1204,35 +1182,103 @@ export default function RegisterLandPage() {
                     </div>
 
                     <div>
-                      <label htmlFor="documentNumber" className="block text-xs text-[#94A3B8] mb-1.5">
-                        Document / Survey Number (Optional)
-                      </label>
-                      <input
-                        id="documentNumber"
-                        type="text"
-                        value={documentNumber}
-                        onChange={(e) => setDocumentNumber(e.target.value)}
-                        placeholder="Leave blank if not available yet"
-                        className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
-                      />
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span className="text-xs text-[#94A3B8]">
+                          Land Documents / Photos *
+                        </span>
+                        <span className="text-[11px] font-mono text-[#64748B]">
+                          {documents.length > 0
+                            ? `${documents.length} file${documents.length === 1 ? '' : 's'} attached`
+                            : 'At least 1 required'}
+                        </span>
+                      </div>
+
+                      <div
+                        onDrop={handleDrop}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onClick={() => fileInputRef.current?.click()}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            fileInputRef.current?.click();
+                          }
+                        }}
+                        className={`rounded-[10px] border-2 border-dashed p-5 text-center cursor-pointer transition-colors ${
+                          dragActive
+                            ? 'border-[#38BDF8] bg-[#38BDF8]/10'
+                            : documents.length > 0
+                              ? 'border-emerald-500/45 bg-[#05080D] hover:border-[#38BDF8]/60'
+                              : 'border-[rgba(91,133,167,0.34)] bg-[#05080D] hover:border-[#38BDF8]/60'
+                        }`}
+                      >
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => {
+                            void readFiles(e.target.files);
+                            e.target.value = '';
+                          }}
+                        />
+                        <Upload className="mx-auto h-6 w-6 text-[#38BDF8] mb-2" />
+                        <p className="text-xs font-medium text-[#F4F7FB]">
+                          Tap or drag land documents / photos here *
+                        </p>
+                        <p className="mt-1 text-[11px] text-[#64748B]">
+                          Required: Upload survey plan, C of O, receipt, or site photo (JPG, PNG, PDF, Word, CAD, or ZIP)
+                        </p>
+                      </div>
+
+                      {documents.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          {documents.map((doc) => (
+                            <div
+                              key={doc.id}
+                              className="flex items-center justify-between gap-3 p-2.5 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.20)]"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                {doc.type.startsWith('image/') && doc.dataUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={doc.dataUrl}
+                                    alt={doc.name}
+                                    className="h-9 w-9 rounded object-cover border border-[rgba(91,133,167,0.25)] shrink-0"
+                                  />
+                                ) : doc.type.startsWith('image/') ? (
+                                  <ImageIcon className="h-4 w-4 text-[#38BDF8] shrink-0" />
+                                ) : (
+                                  <FileText className="h-4 w-4 text-[#38BDF8] shrink-0" />
+                                )}
+                                <div className="min-w-0">
+                                  <p className="text-xs font-medium text-[#F4F7FB] truncate">
+                                    {doc.name}
+                                  </p>
+                                  <p className="text-[11px] font-mono text-[#64748B]">
+                                    {formatFileSize(doc.size)}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => removeDocument(doc.id)}
+                                className="p-1.5 rounded-lg text-[#64748B] hover:text-rose-400 transition-colors shrink-0"
+                                aria-label={`Remove ${doc.name}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div>
-                    <label htmlFor="description" className="block text-xs text-[#94A3B8] mb-1.5">
-                      Description &amp; Nearby Landmarks (Optional)
-                    </label>
-                    <textarea
-                      id="description"
-                      rows={3}
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      placeholder="e.g. Dry land, fenced with gate, tarred road access, 5 mins from expressway..."
-                      className="w-full p-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
-                    />
-                  </div>
-
-                  {/* Listing for Sale Option */}
+                  {/* Asking Price & List for Sale */}
                   <div className="pt-4 border-t border-[rgba(91,133,167,0.16)] space-y-4">
                     <label className="flex items-center justify-between gap-4 cursor-pointer">
                       <div>
@@ -1240,7 +1286,7 @@ export default function RegisterLandPage() {
                           List this land for sale on Explore Land
                         </p>
                         <p className="text-xs text-[#64748B]">
-                          Turn off if you only want to register your land without selling it.
+                          Turn off if you only want to register ownership without selling.
                         </p>
                       </div>
                       <input
@@ -1253,28 +1299,28 @@ export default function RegisterLandPage() {
 
                     {forSale && (
                       <div>
-                        <label htmlFor="priceUsd" className="block text-xs text-[#94A3B8] mb-1.5">
-                          Asking Price ($ USD) *
+                        <label htmlFor="priceToken" className="block text-xs text-[#94A3B8] mb-1.5">
+                          Asking Price ({tokenInfo.symbol} Token) *
                         </label>
                         <input
-                          id="priceUsd"
+                          id="priceToken"
                           type="text"
                           inputMode="decimal"
                           required
-                          value={priceUsdInput}
-                          onChange={(e) => setPriceUsdInput(e.target.value)}
-                          placeholder="e.g. 50,000"
+                          value={priceTokenInput}
+                          onChange={(e) => setPriceTokenInput(e.target.value)}
+                          placeholder="e.g. 500"
                           className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono tabular-nums text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                         />
-                        {numericPriceUsd > 0 && (
-                          <div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 text-xs font-mono text-emerald-300 tabular-nums">
-                            <span>Display Amount:</span>
-                            <strong className="text-sm text-emerald-400">
-                              {formatUsd(numericPriceUsd)}
+                        {numericPriceToken > 0 && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-mono text-[#94A3B8] tabular-nums">
+                            <span>Listed price:</span>
+                            <strong className="text-[#67E8F9]">
+                              {formatTokenAmount(numericPriceToken, tokenInfo.symbol)}
                             </strong>
                             <span className="text-[#475569]">·</span>
-                            <strong className="text-sm text-[#38BDF8]">
-                              {formatEthFromUsd(numericPriceUsd)}
+                            <strong className="text-emerald-400">
+                              ≈ {formatUsd(numericPriceUsd)}
                             </strong>
                           </div>
                         )}
@@ -1282,209 +1328,125 @@ export default function RegisterLandPage() {
                     )}
                   </div>
 
-                  {viewMode === 'guided' && (
-                    <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
-                      <button
-                        type="button"
-                        onClick={() => goToStep(2)}
-                        className="h-11 px-5 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-sm font-medium text-[#E2E8F0] hover:border-[#38BDF8] inline-flex items-center gap-2 whitespace-nowrap"
-                      >
-                        <ArrowLeft className="h-4 w-4" />
-                        <span>Back to Map</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleNextFromStep3}
-                        className="h-11 px-6 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] inline-flex items-center gap-2 transition-colors whitespace-nowrap"
-                      >
-                        <span>Continue to Upload Documents</span>
-                        <ArrowRight className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-                </fieldset>
+                  {/* Optional Extras Accordion (Document Number, Description, Wallet) */}
+                  <div className="pt-3 border-t border-[rgba(91,133,167,0.16)]">
+                    <button
+                      type="button"
+                      onClick={() => setShowOptionalDetails((prev) => !prev)}
+                      className="w-full py-2 flex items-center justify-between gap-2 text-xs font-medium text-[#94A3B8] hover:text-[#67E8F9] transition-colors"
+                    >
+                      <span>
+                        Optional: Document Number, Description or {tokenInfo.symbol} Wallet
+                      </span>
+                      {showOptionalDetails ? (
+                        <ChevronUp className="h-4 w-4 shrink-0" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 shrink-0" />
+                      )}
+                    </button>
 
-                {/* STEP 4: Upload Land Documents (Any File Type) & Final Submit */}
-                <fieldset
-                  className={
-                    viewMode === 'all' || activeStep === 4 ? 'space-y-5' : 'hidden'
-                  }
-                >
-                  <div className="pb-3 border-b border-[rgba(91,133,167,0.16)] flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Upload className="h-4 w-4 text-[#38BDF8]" />
-                      <legend className="text-base font-semibold text-[#F4F7FB]">
-                        4. Upload Land Documents &amp; Submit
-                      </legend>
-                    </div>
-                    <span className="text-xs text-[#64748B]">
-                      Recommended · Optional if not on hand right now
-                    </span>
-                  </div>
+                    {showOptionalDetails && (
+                      <div className="mt-4 space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label htmlFor="documentNumber" className="block text-xs text-[#94A3B8] mb-1.5">
+                              Document / Survey Number
+                            </label>
+                            <input
+                              id="documentNumber"
+                              type="text"
+                              value={documentNumber}
+                              onChange={(e) => setDocumentNumber(e.target.value)}
+                              placeholder="Optional reference number"
+                              className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                            />
+                          </div>
 
-                  <div
-                    onDrop={handleDrop}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onClick={() => fileInputRef.current?.click()}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        fileInputRef.current?.click();
-                      }
-                    }}
-                    className={`rounded-[10px] border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${
-                      dragActive
-                        ? 'border-[#38BDF8] bg-[#38BDF8]/10'
-                        : 'border-[rgba(91,133,167,0.30)] bg-[#05080D] hover:border-[#38BDF8]/60'
-                    }`}
-                  >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => {
-                        void readFiles(e.target.files);
-                        e.target.value = '';
-                      }}
-                    />
-                    <Upload className="mx-auto h-8 w-8 text-[#38BDF8] mb-3" />
-                    <p className="text-sm font-medium text-[#F4F7FB]">
-                      Tap to choose files or take a photo of your land papers
-                    </p>
-                    <p className="mt-1 text-xs text-[#64748B]">
-                      All file types supported: Phone photos (JPG, PNG), PDF, Word, Survey CAD (DWG), GeoJSON, or ZIP
-                    </p>
-                  </div>
-
-                  {documents.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-mono text-[#94A3B8]">
-                        Attached Files ({documents.length})
-                      </p>
-                      {documents.map((doc) => (
-                        <div
-                          key={doc.id}
-                          className="flex items-center justify-between gap-3 p-3 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.20)]"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            {doc.type.startsWith('image/') && doc.dataUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={doc.dataUrl}
-                                alt={doc.name}
-                                className="h-10 w-10 rounded object-cover border border-[rgba(91,133,167,0.25)] shrink-0"
-                              />
-                            ) : doc.type.startsWith('image/') ? (
-                              <ImageIcon className="h-5 w-5 text-[#38BDF8] shrink-0" />
-                            ) : (
-                              <FileText className="h-5 w-5 text-[#38BDF8] shrink-0" />
-                            )}
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-[#F4F7FB] truncate">
-                                {doc.name}
-                              </p>
-                              <p className="text-xs font-mono text-[#64748B]">
-                                {formatFileSize(doc.size)} · {doc.type || 'file'}
-                              </p>
+                          <div>
+                            <div className="flex items-center justify-between gap-2 mb-1.5">
+                              <label htmlFor="ownerWalletAddress" className="text-xs text-[#94A3B8]">
+                                {tokenInfo.symbol} Wallet Address (to receive payments)
+                              </label>
+                              <button
+                                type="button"
+                                disabled={connectingWallet}
+                                onClick={() => void handleAutoFillWallet()}
+                                className="text-[11px] font-medium text-[#38BDF8] hover:underline inline-flex items-center gap-1 whitespace-nowrap"
+                              >
+                                {connectingWallet ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Wallet className="h-3 w-3" />
+                                )}
+                                <span>{connectingWallet ? 'Connecting…' : 'Connect Wallet'}</span>
+                              </button>
                             </div>
+                            <input
+                              id="ownerWalletAddress"
+                              type="text"
+                              value={ownerWalletAddress}
+                              onChange={(e) => setOwnerWalletAddress(e.target.value)}
+                              placeholder="0x..."
+                              spellCheck={false}
+                              className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                            />
                           </div>
-
-                          <button
-                            type="button"
-                            onClick={() => removeDocument(doc.id)}
-                            className="p-2 rounded-lg text-[#64748B] hover:text-rose-400 hover:bg-rose-950/30 transition-colors shrink-0"
-                            aria-label={`Remove ${doc.name}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
                         </div>
-                      ))}
-                    </div>
-                  )}
 
-                  {/* Quick Review Before Submission */}
-                  <div className="pt-4 border-t border-[rgba(91,133,167,0.16)] space-y-3">
-                    <p className="text-xs font-medium text-[#94A3B8]">Registration Summary</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                      <div>
-                        <p className="text-[#64748B]">Owner &amp; Phone</p>
-                        <p className="font-medium text-[#F4F7FB] mt-0.5 truncate">
-                          {ownerName.trim() || '—'} · {ownerPhone.trim() || '—'}
-                        </p>
-                        {ownerWalletAddress.trim() && (
-                          <p className="font-mono text-[11px] text-[#38BDF8] mt-0.5 truncate">
-                            ETH: {ownerWalletAddress.trim()}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-[#64748B]">Land &amp; Location</p>
-                        <p className="font-medium text-[#F4F7FB] mt-0.5 truncate">
-                          {title.trim() || 'Untitled'} · {state}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[#64748B]">Size &amp; Map</p>
-                        <p className="font-mono font-medium text-[#F4F7FB] mt-0.5 tabular-nums">
-                          {numericArea > 0 ? `${numericArea.toLocaleString()} sqm` : '—'} ·{' '}
-                          {gisPolygon.length >= 3 ? `${gisPolygon.length} corners` : 'No map box'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[#64748B]">Asking Price &amp; Files</p>
-                        {forSale && numericPriceUsd > 0 ? (
-                          <div className="mt-0.5 font-mono tabular-nums">
-                            <p className="font-semibold text-emerald-400">
-                              {formatUsd(numericPriceUsd)}
-                            </p>
-                            <p className="text-[11px] text-[#38BDF8]">
-                              ≈ {formatEthFromUsd(numericPriceUsd)}
-                            </p>
-                          </div>
-                        ) : (
-                          <p className="font-mono font-semibold text-emerald-400 mt-0.5">
-                            Registry only
-                          </p>
-                        )}
-                        <p className="text-[11px] text-[#64748B]">
-                          {documents.length} {documents.length === 1 ? 'file' : 'files'} attached
-                        </p>
-                      </div>
-                    </div>
-
-                    {gisMapImageUrl && (
-                      <div className="flex items-center gap-3 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.22)] p-2.5">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={gisMapImageUrl}
-                          alt="Captured map preview"
-                          className="h-14 w-[75px] rounded object-cover border border-[#38BDF8]/40 shrink-0"
-                        />
-                        <div className="text-xs min-w-0">
-                          <p className="font-medium text-[#F4F7FB]">
-                            Captured OpenMap Picture Attached
-                          </p>
-                          <p className="text-[11px] text-[#64748B]">
-                            This map snapshot will display as the land photo on Explore Land.
-                          </p>
+                        <div>
+                          <label htmlFor="description" className="block text-xs text-[#94A3B8] mb-1.5">
+                            Description &amp; Nearby Landmarks
+                          </label>
+                          <textarea
+                            id="description"
+                            rows={2}
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value)}
+                            placeholder="e.g. Dry land, fenced with gate, tarred road access..."
+                            className="w-full p-3 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                          />
                         </div>
                       </div>
                     )}
                   </div>
+
+                  {/* Compact Pre-Submit Snapshot & Summary */}
+                  {(gisMapImageUrl || numericArea > 0) && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[rgba(91,133,167,0.16)] text-xs">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {gisMapImageUrl && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={gisMapImageUrl}
+                            alt="Captured map preview"
+                            className="h-12 w-16 rounded object-cover border border-[#38BDF8]/40 shrink-0"
+                          />
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-medium text-[#F4F7FB] truncate">
+                            {title.trim() || buildShortTitleFromLocation(location) || 'Land Parcel'} · {state}
+                          </p>
+                          <p className="font-mono text-[11px] text-[#94A3B8] tabular-nums">
+                            {numericArea > 0 ? `${numericArea.toLocaleString()} sqm` : 'No size'}
+                            {gisPolygon.length >= 3 ? ` · ${gisPolygon.length} corners drawn` : ''}
+                            {forSale && numericPriceToken > 0
+                              ? ` · ${formatTokenAmount(numericPriceToken, tokenInfo.symbol)}`
+                              : ''}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
                     {viewMode === 'guided' && (
                       <button
                         type="button"
-                        onClick={() => goToStep(3)}
+                        onClick={() => goToStep(1)}
                         className="h-12 px-5 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-sm font-medium text-[#E2E8F0] hover:border-[#38BDF8] inline-flex items-center gap-2 whitespace-nowrap"
                       >
                         <ArrowLeft className="h-4 w-4" />
-                        <span>Back</span>
+                        <span>Back to Map</span>
                       </button>
                     )}
 
@@ -1494,7 +1456,7 @@ export default function RegisterLandPage() {
                       className="flex-1 h-12 px-6 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] transition-colors flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap"
                     >
                       <Check className="h-4 w-4" />
-                      <span>{submitting ? 'Submitting Land Registration…' : 'Submit Land Registration'}</span>
+                      <span>{submitting ? 'Submitting Land Registration…' : 'Register Land'}</span>
                     </button>
                   </div>
                 </fieldset>

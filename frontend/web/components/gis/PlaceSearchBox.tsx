@@ -102,25 +102,33 @@ export function PlaceSearchBox({
       setSearchError(null);
 
       try {
-        const url = new URL('https://nominatim.openstreetmap.org/search');
-        url.searchParams.set('format', 'jsonv2');
-        url.searchParams.set('addressdetails', '1');
-        url.searchParams.set('countrycodes', 'ng');
-        url.searchParams.set('limit', '6');
-        url.searchParams.set('q', trimmed);
+        const fetchNominatim = async (restrictNigeria: boolean) => {
+          const url = new URL('https://nominatim.openstreetmap.org/search');
+          url.searchParams.set('format', 'jsonv2');
+          url.searchParams.set('addressdetails', '1');
+          if (restrictNigeria) {
+            url.searchParams.set('countrycodes', 'ng');
+          }
+          url.searchParams.set('limit', '6');
+          url.searchParams.set('q', trimmed);
 
-        const res = await fetch(url.toString(), {
-          signal: controller.signal,
-          headers: {
-            Accept: 'application/json',
-          },
-        });
+          const res = await fetch(url.toString(), {
+            signal: controller.signal,
+            headers: {
+              Accept: 'application/json',
+            },
+          });
+          if (!res.ok) {
+            throw new Error(`OpenStreetMap geocoder returned ${res.status}`);
+          }
+          return (await res.json()) as NominatimItem[];
+        };
 
-        if (!res.ok) {
-          throw new Error(`OpenStreetMap geocoder returned ${res.status}`);
+        let data = await fetchNominatim(true);
+        if (!Array.isArray(data) || data.length === 0) {
+          data = await fetchNominatim(false);
         }
 
-        const data = (await res.json()) as NominatimItem[];
         const osmResults: PlaceSuggestion[] = (Array.isArray(data) ? data : [])
           .map((item) => {
             const lat = parseFloat(item.lat);
@@ -184,12 +192,12 @@ export function PlaceSearchBox({
       } catch (err) {
         if ((err as { name?: string })?.name === 'AbortError') return;
         if (localMatches.length === 0) {
-          setSearchError('OpenStreetMap search temporarily unavailable. Use quick area buttons or tap the map.');
+          setSearchError('Address lookup temporarily unavailable. Pick a quick area or pan the map.');
         }
       } finally {
         setIsLoading(false);
       }
-    }, 320);
+    }, 300);
 
     return () => {
       window.clearTimeout(timer);
@@ -225,8 +233,16 @@ export function PlaceSearchBox({
           onFocus={() => {
             if (suggestions.length > 0) setIsOpen(true);
           }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (suggestions.length > 0) {
+                handleSelect(suggestions[0]);
+              }
+            }
+          }}
           placeholder={placeholder}
-          aria-label="Search land address or neighborhood on OpenStreetMap"
+          aria-label="Search land address or neighborhood on map"
           className="w-full h-11 pl-10 pr-10 rounded-[8px] bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-sm text-[#F4F7FB] placeholder-[#64748B] focus:border-[#38BDF8] focus:outline-none"
         />
         {isLoading ? (

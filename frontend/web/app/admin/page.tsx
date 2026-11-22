@@ -9,8 +9,11 @@ import {
   getPurchaseOrders,
   savePurchaseOrders,
   getListingPriceUsd,
+  getListingPriceToken,
+  tokenToUsd,
   formatUsd,
-  formatEthFromUsd,
+  formatListingTokenPrice,
+  formatTokenAmount,
   formatFileSize,
   NGN_PER_USD,
   type LandListing,
@@ -18,6 +21,7 @@ import {
   type LandDocument,
   type LandPurchaseOrder,
 } from '@/lib/land-store';
+import { useIntegratedToken } from '@/lib/use-integrated-token';
 import {
   getUserAccountsWithStats,
   updateUserAccountStatus,
@@ -109,6 +113,7 @@ export default function StandaloneAdminPage() {
   const [orders, setOrders] = useState<LandPurchaseOrder[]>([]);
   const [userStats, setUserStats] = useState<UserAccountWithStats[]>([]);
   const [inviteCodes, setInviteCodes] = useState<RoleInviteCode[]>([]);
+  const { tokenInfo } = useIntegratedToken();
 
   // Role Access Code generator state
   const [codeRoleToGenerate, setCodeRoleToGenerate] = useState<InviteCodeRole>('registrar');
@@ -447,6 +452,10 @@ export default function StandaloneAdminPage() {
     e.preventDefault();
     if (!newTitle.trim() || !newLocation.trim()) return;
 
+    const parsedTokens = Number(newPrice);
+    const priceToken = Number.isFinite(parsedTokens) && parsedTokens > 0 ? parsedTokens : 50000;
+    const priceUsd = tokenToUsd(priceToken);
+
     addLandListing({
       title: newTitle.trim(),
       ownerName: newOwner.trim() || 'Registry Administration',
@@ -458,8 +467,10 @@ export default function StandaloneAdminPage() {
       category: newCategory,
       documentType: 'Certificate of Occupancy (C of O)',
       documentNumber: newDocRef.trim() || `ADM/COFO/${Date.now().toString().slice(-4)}`,
-      priceUsd: Number(newPrice) || 50000,
-      priceNgn: (Number(newPrice) || 50000) * NGN_PER_USD,
+      priceToken,
+      tokenSymbol: tokenInfo.symbol,
+      priceUsd,
+      priceNgn: priceUsd * NGN_PER_USD,
       forSale: true,
       saleStatus: 'available',
       approvalStatus: 'approved',
@@ -634,6 +645,7 @@ export default function StandaloneAdminPage() {
   const paidOrders = orders.filter((o) => o.status === 'completed');
   const pendingOrders = orders.filter((o) => o.status !== 'completed');
   const totalPaidUsd = paidOrders.reduce((sum, o) => sum + getListingPriceUsd(o), 0);
+  const totalPaidToken = paidOrders.reduce((sum, o) => sum + getListingPriceToken(o), 0);
 
   const activeCodesCount = inviteCodes.filter((c) => c.status === 'active').length;
 
@@ -996,8 +1008,8 @@ export default function StandaloneAdminPage() {
               <p className="text-xs text-slate-400">Payments Made (Settled)</p>
               <p className="mt-1 text-2xl font-bold font-mono tabular-nums text-emerald-400">
                 {paidOrders.length}{' '}
-                <span className="text-sm font-normal text-slate-400">
-                  ({formatUsd(totalPaidUsd)})
+                <span className="text-sm font-normal text-sky-300">
+                  ({formatTokenAmount(totalPaidToken, tokenInfo.symbol)})
                 </span>
               </p>
               <p className="mt-1 text-[11px] font-mono text-amber-300">
@@ -1294,8 +1306,8 @@ export default function StandaloneAdminPage() {
                             <span className="text-slate-400">
                               {parcel.forSale
                                 ? parcel.saleStatus === 'sold'
-                                  ? `Sold (${formatUsd(getListingPriceUsd(parcel))} · ${formatEthFromUsd(getListingPriceUsd(parcel), 2)})`
-                                  : `For Sale (${formatUsd(getListingPriceUsd(parcel))} · ${formatEthFromUsd(getListingPriceUsd(parcel), 2)})`
+                                  ? `Sold (${formatListingTokenPrice(parcel, tokenInfo.symbol)} · ≈ ${formatUsd(getListingPriceUsd(parcel))})`
+                                  : `For Sale (${formatListingTokenPrice(parcel, tokenInfo.symbol)} · ≈ ${formatUsd(getListingPriceUsd(parcel))})`
                                 : 'Not Listed for Sale'}
                             </span>
                           </div>
@@ -1310,7 +1322,7 @@ export default function StandaloneAdminPage() {
                             Owner: <span className="text-slate-300">{parcel.ownerName}</span> ({parcel.ownerEmail} · {parcel.ownerPhone})
                             {parcel.ownerWalletAddress && (
                               <span className="ml-2 font-mono text-indigo-300">
-                                · ETH: {parcel.ownerWalletAddress.slice(0, 6)}…{parcel.ownerWalletAddress.slice(-4)}
+                                · {tokenInfo.symbol} Wallet: {parcel.ownerWalletAddress.slice(0, 6)}…{parcel.ownerWalletAddress.slice(-4)}
                               </span>
                             )}
                           </p>
@@ -1430,10 +1442,10 @@ export default function StandaloneAdminPage() {
                           <td className="px-5 py-4 font-mono tabular-nums text-slate-300">
                             {parcel.areaSqm.toLocaleString()} sqm
                           </td>
-                          <td className="px-5 py-4 font-mono tabular-nums text-white font-semibold">
-                            <p>{formatUsd(getListingPriceUsd(parcel))}</p>
-                            <p className="text-[11px] font-normal text-sky-400">
-                              {formatEthFromUsd(getListingPriceUsd(parcel))}
+                          <td className="px-5 py-4 font-mono tabular-nums text-sky-300 font-semibold">
+                            <p>{formatListingTokenPrice(parcel, tokenInfo.symbol)}</p>
+                            <p className="text-[11px] font-normal text-slate-400">
+                              ≈ {formatUsd(getListingPriceUsd(parcel))}
                             </p>
                           </td>
                           <td className="px-5 py-4">
@@ -1472,8 +1484,9 @@ export default function StandaloneAdminPage() {
                     <span>Payments &amp; Buyer Purchase Orders</span>
                   </h2>
                   <p className="text-xs text-slate-400 mt-0.5 font-mono tabular-nums">
-                    {paidOrders.length} payments completed ({formatUsd(totalPaidUsd)} ·{' '}
-                    {formatEthFromUsd(totalPaidUsd, 2)}) · {pendingOrders.length} pending settlement
+                    {paidOrders.length} payments completed (
+                    {formatTokenAmount(totalPaidToken, tokenInfo.symbol)} · ≈{' '}
+                    {formatUsd(totalPaidUsd)}) · {pendingOrders.length} pending settlement
                   </p>
                 </div>
 
@@ -1532,10 +1545,17 @@ export default function StandaloneAdminPage() {
                             <p className="text-white">{order.landTitle}</p>
                             <p className="font-mono text-slate-400">{order.parcelRef}</p>
                           </td>
-                          <td className="px-5 py-4 font-mono tabular-nums text-white font-semibold">
-                            <p>{formatUsd(getListingPriceUsd(order))}</p>
-                            <p className="text-[11px] font-normal text-sky-400">
-                              {formatEthFromUsd(getListingPriceUsd(order))}
+                          <td className="px-5 py-4 font-mono tabular-nums text-sky-300 font-semibold">
+                            <p>
+                              {order.tokenAmountPaid
+                                ? `${order.tokenAmountPaid} ${order.tokenSymbol || tokenInfo.symbol}`
+                                : formatListingTokenPrice(
+                                    order,
+                                    order.tokenSymbol || tokenInfo.symbol,
+                                  )}
+                            </p>
+                            <p className="text-[11px] font-normal text-slate-400">
+                              ≈ {formatUsd(getListingPriceUsd(order))}
                             </p>
                           </td>
                           <td className="px-5 py-4">
@@ -2015,8 +2035,16 @@ export default function StandaloneAdminPage() {
                         </p>
                         <p className="font-semibold text-white mt-0.5">{order.landTitle}</p>
                         <p className="text-slate-400">
-                          {order.paymentMethod} · {formatUsd(getListingPriceUsd(order))} (
-                          {formatEthFromUsd(getListingPriceUsd(order))})
+                          {order.paymentMethod} ·{' '}
+                          <span className="font-mono text-sky-300">
+                            {order.tokenAmountPaid
+                              ? `${order.tokenAmountPaid} ${order.tokenSymbol || tokenInfo.symbol}`
+                              : formatListingTokenPrice(
+                                  order,
+                                  order.tokenSymbol || tokenInfo.symbol,
+                                )}
+                          </span>{' '}
+                          (≈ {formatUsd(getListingPriceUsd(order))})
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -2184,9 +2212,13 @@ export default function StandaloneAdminPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">Price (USD $)</label>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Price ({tokenInfo.symbol} Token)
+                  </label>
                   <input
                     type="number"
+                    min="0.01"
+                    step="any"
                     value={newPrice}
                     onChange={(e) => setNewPrice(e.target.value)}
                     placeholder="75000"

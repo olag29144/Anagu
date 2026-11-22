@@ -1,15 +1,17 @@
 'use client';
 
-import { useEffect, useMemo, useState, FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, FormEvent } from 'react';
 import Link from 'next/link';
 import { Navbar } from '@/components/landing/Navbar';
 import {
   getLandListings,
   getListingPriceUsd,
+  getListingPriceToken,
   createPurchaseOrder,
   updateLandListing,
   formatUsd,
-  formatEthFromUsd,
+  formatListingTokenPrice,
+  formatTokenAmount,
   formatFileSize,
   type LandListing,
   type LandCategory,
@@ -17,9 +19,17 @@ import {
   type PurchasePaymentMethod,
 } from '@/lib/land-store';
 import {
+  LAND_FEE_TOKEN_ADDRESS,
+  LAND_REGISTRY_ADDRESS,
+} from '@/lib/contracts';
+import {
   transferTitleOnChain,
   verifyLandTitleOnChain,
+  fetchIntegratedTokenBalance,
+  payLandWithIntegratedToken,
+  type IntegratedTokenBalance,
 } from '@/lib/ethers-contracts';
+import { useIntegratedToken } from '@/lib/use-integrated-token';
 import {
   getActiveUserAccount,
   ensureUserAccountForRegistration,
@@ -35,17 +45,21 @@ import { GoogleSignUpButton } from '@/components/auth/GoogleSignUpButton';
 import {
   subscribeWalletDiscovery,
   discoverAllWallets,
-  getSnapshotDetectedWallets,
   connectWalletProvider,
   signLandPurchaseAuthorization,
   sendLandPurchaseTransaction,
   getMobileWalletDeepLinks,
   triggerDeviceEthereumWalletIntent,
+  buildErc20TransferIntentUri,
+  COMMON_EVM_NETWORKS,
+  switchWalletNetwork,
   isMobileDevice,
   isAndroidDevice,
+  isRunningInIframe,
   formatShortAddress,
   getChainName,
   mapWalletError,
+  watchLfeeTokenInWallet,
   type DetectedWalletProvider,
   type ConnectedWalletState,
 } from '@/lib/web3-wallet';
@@ -107,7 +121,7 @@ export default function ExploreLandPage() {
   const [buyerEmail, setBuyerEmail] = useState('');
   const [buyerPhone, setBuyerPhone] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PurchasePaymentMethod>(
-    'Web3 Wallet Signature (EIP-191)',
+    'Pay with Integrated Token (ERC-20)',
   );
   const [onChainTokenIdInput, setOnChainTokenIdInput] = useState('');
   const [buyerNotes, setBuyerNotes] = useState('');
@@ -126,14 +140,21 @@ export default function ExploreLandPage() {
   const [gateEmail, setGateEmail] = useState('');
   const [gateError, setGateError] = useState<string | null>(null);
 
-  // Web3 Wallet state
+  // Web3 Wallet & Integrated Token state
   const [detectedWallets, setDetectedWallets] = useState<DetectedWalletProvider[]>([]);
   const [activeProvider, setActiveProvider] = useState<DetectedWalletProvider | null>(null);
   const [connectedWallet, setConnectedWallet] = useState<ConnectedWalletState | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [switchingNetwork, setSwitchingNetwork] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [inIframe, setInIframe] = useState(false);
   const [showMobileLinks, setShowMobileLinks] = useState(false);
+  const { tokenInfo } = useIntegratedToken(activeProvider?.provider ?? null);
+  const [tokenBalance, setTokenBalance] = useState<IntegratedTokenBalance | null>(null);
+  const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
+  const [tokenBalanceError, setTokenBalanceError] = useState<string | null>(null);
+  const buyErrorBottomRef = useRef<HTMLDivElement | null>(null);
 
   const prefillBuyerFromUser = (user: UserAccount) => {
     setBuyerName((prev) => prev || user.fullName);
@@ -158,9 +179,11 @@ export default function ExploreLandPage() {
         if (updated) setActiveUser(updated);
       }
       setPaymentMethod((prev) =>
-        prev === 'Web3 Wallet On-Chain Escrow'
-          ? 'Web3 Wallet On-Chain Escrow'
-          : 'Web3 Wallet Signature (EIP-191)',
+        prev === 'Web3 Wallet On-Chain Escrow' ||
+        prev === 'Pay with Integrated Token (ERC-20)' ||
+        prev === 'LandRegistry On-Chain Title Transfer'
+          ? prev
+          : 'Pay with Integrated Token (ERC-20)',
       );
     } catch (err) {
       setWalletError(mapWalletError(err));
@@ -204,6 +227,7 @@ export default function ExploreLandPage() {
     setListings(initialListings);
     setLoaded(true);
     setIsMobile(isMobileDevice());
+    setInIframe(isRunningInIframe());
 
     const syncUser = () => {
       const current = getActiveUserAccount();
@@ -285,6 +309,71 @@ export default function ExploreLandPage() {
     };
   }, [activeProvider]);
 
+  const refreshConnectedTokenBalance = async (
+    providerArg = activeProvider?.provider,
+    addressArg = connectedWallet?.address,
+  ) => {
+    if (!providerArg || !addressArg) {
+      setTokenBalance(null);
+      setTokenBalanceError(null);
+      return;
+    }
+    setTokenBalanceLoading(true);
+    setTokenBalanceError(null);
+    try {
+      const bal = await fetchIntegratedTokenBalance(providerArg, addressArg);
+      setTokenBalance(bal);
+    } catch {
+      setTokenBalance(null);
+      setTokenBalanceError(
+        `Could not read ${tokenInfo.symbol} balance on this network.`,
+      );
+    } finally {
+      setTokenBalanceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!activeProvider?.provider || !connectedWallet?.address) {
+      setTokenBalance(null);
+      setTokenBalanceError(null);
+      return;
+    }
+    let cancelled = false;
+    setTokenBalanceLoading(true);
+    setTokenBalanceError(null);
+    void fetchIntegratedTokenBalance(activeProvider.provider, connectedWallet.address)
+      .then((bal) => {
+        if (!cancelled) {
+          setTokenBalance(bal);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setTokenBalance(null);
+          setTokenBalanceError(
+            err instanceof Error
+              ? err.message
+              : `Switch your wallet to the network hosting ${tokenInfo.symbol} to view live balance.`,
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTokenBalanceLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProvider, connectedWallet?.address, connectedWallet?.chainId, tokenInfo.symbol]);
+
+  useEffect(() => {
+    if (buyError) {
+      buyErrorBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [buyError]);
+
   const forSaleListings = useMemo(() => {
     return listings.filter(
       (item) => item.forSale && item.approvalStatus !== 'rejected',
@@ -314,8 +403,8 @@ export default function ExploreLandPage() {
     });
 
     return [...filtered].sort((a, b) => {
-      if (sortBy === 'price_asc') return getListingPriceUsd(a) - getListingPriceUsd(b);
-      if (sortBy === 'price_desc') return getListingPriceUsd(b) - getListingPriceUsd(a);
+      if (sortBy === 'price_asc') return getListingPriceToken(a) - getListingPriceToken(b);
+      if (sortBy === 'price_desc') return getListingPriceToken(b) - getListingPriceToken(a);
       if (sortBy === 'area_desc') return b.areaSqm - a.areaSqm;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
@@ -416,23 +505,60 @@ export default function ExploreLandPage() {
     handleAuthGateSuccess(user);
   };
 
+  const handleSwitchNetwork = async (targetChainId: string) => {
+    if (!activeProvider?.provider) return;
+    setSwitchingNetwork(targetChainId);
+    setWalletError(null);
+    setBuyError(null);
+    try {
+      const switched = await switchWalletNetwork(activeProvider.provider, targetChainId);
+      setConnectedWallet((prev) =>
+        prev ? { ...prev, chainId: switched, chainName: getChainName(switched) } : prev,
+      );
+      if (connectedWallet?.address) {
+        await refreshConnectedTokenBalance(activeProvider.provider, connectedWallet.address);
+      }
+    } catch (err) {
+      setWalletError(mapWalletError(err));
+    } finally {
+      setSwitchingNetwork(null);
+    }
+  };
+
+  const getParcelErc20IntentUri = (parcel: LandListing) =>
+    buildErc20TransferIntentUri({
+      tokenAddress: LAND_FEE_TOKEN_ADDRESS,
+      recipientAddress: parcel.ownerWalletAddress,
+      amountTokens: getListingPriceToken(parcel),
+      decimals: tokenInfo.decimals,
+      chainIdHex: connectedWallet?.chainId,
+    });
+
   const handleRefreshWallets = async () => {
     setWalletError(null);
+    setBuyError(null);
     const wallets = await discoverAllWallets(500);
     setDetectedWallets(wallets);
-    if (wallets.length === 1) {
-      void connectWithWallet(wallets[0]);
-    } else if (wallets.length > 1) {
+    if (wallets.length >= 1) {
       setShowMobileLinks(false);
+      const preferred =
+        (activeProvider && wallets.find((w) => w.id === activeProvider.id)) || wallets[0];
+      void connectWithWallet(preferred);
     } else {
       if (isMobile && isAndroidDevice()) {
-        triggerDeviceEthereumWalletIntent();
+        triggerDeviceEthereumWalletIntent(
+          buyParcel && paymentMethod === 'Pay with Integrated Token (ERC-20)'
+            ? getParcelErc20IntentUri(buyParcel)
+            : undefined,
+        );
       }
       setShowMobileLinks(true);
       setWalletError(
-        isMobile
-          ? 'No in-app wallet browser detected. Tap your mobile wallet app below to open and connect.'
-          : 'No browser Web3 wallet detected. Unlock MetaMask, Rabby, Coinbase, Trust, Phantom, or OKX, or open a mobile wallet below.',
+        inIframe
+          ? 'Browser extensions (MetaMask, Rabby, Phantom) cannot inject into embedded preview frames. Click "Open in Full Browser Tab" below, or use a phone wallet app.'
+          : isMobile
+            ? 'No in-app wallet browser detected. Tap your mobile wallet app below to open and connect.'
+            : 'No browser Web3 wallet detected. Unlock MetaMask, Rabby, Coinbase, Trust, Phantom, or OKX, or open a mobile wallet below.',
       );
     }
   };
@@ -441,6 +567,7 @@ export default function ExploreLandPage() {
     e.preventDefault();
     if (!buyParcel) return;
     setBuyError(null);
+    setWalletError(null);
 
     const currentUser = getActiveUserAccount();
     if (!currentUser) {
@@ -450,19 +577,20 @@ export default function ExploreLandPage() {
     }
 
     if (!buyerName.trim()) {
-      setBuyError('Please enter your full name.');
+      setBuyError('Please enter your Buyer Full Name above before continuing.');
       return;
     }
     if (!buyerEmail.trim() || !buyerEmail.includes('@')) {
-      setBuyError('Please enter a valid email address.');
+      setBuyError('Please enter a valid Email Address above before continuing.');
       return;
     }
     if (!buyerPhone.trim()) {
-      setBuyError('Please enter a contact phone number.');
+      setBuyError('Please enter a Phone Number above before continuing.');
       return;
     }
 
     const isWeb3Method =
+      paymentMethod === 'Pay with Integrated Token (ERC-20)' ||
       paymentMethod === 'Web3 Wallet Signature (EIP-191)' ||
       paymentMethod === 'Web3 Wallet On-Chain Escrow' ||
       paymentMethod === 'LandRegistry On-Chain Title Transfer';
@@ -472,29 +600,60 @@ export default function ExploreLandPage() {
     let onChainTokenId: string | undefined;
     let feeTokenAmount: string | undefined;
     let feeApproveTxHash: string | undefined;
+    let tokenAmountPaid: string | undefined;
+    let paidTokenSymbol: string | undefined = tokenInfo.symbol;
+    let paidTokenAddress: string | undefined;
     let activeConnected = connectedWallet;
     let providerToUse = activeProvider?.provider;
+
+    const parcelTokenPrice = getListingPriceToken(buyParcel);
+    const parcelUsdPrice = getListingPriceUsd(buyParcel);
 
     if (isWeb3Method) {
       setSubmittingPurchase(true);
       try {
         if (!activeConnected || !providerToUse) {
           const wallets =
-            detectedWallets.length > 0 ? detectedWallets : getSnapshotDetectedWallets();
+            detectedWallets.length > 0 ? detectedWallets : await discoverAllWallets(500);
+          setDetectedWallets(wallets);
+
           if (wallets.length === 0) {
             setSubmittingPurchase(false);
+            setShowMobileLinks(true);
+            if (isMobile && isAndroidDevice()) {
+              triggerDeviceEthereumWalletIntent(
+                paymentMethod === 'Pay with Integrated Token (ERC-20)'
+                  ? getParcelErc20IntentUri(buyParcel)
+                  : undefined,
+              );
+            }
             setBuyError(
-              'Please connect a Web3 wallet above (or open in your mobile wallet app), or switch Settlement Method to Bank Escrow Transfer.',
+              inIframe
+                ? `No Web3 wallet extension was detected inside this embedded preview iframe. Open this page in a full browser tab (click the button below) so MetaMask/Rabby/Phantom can pop up, or open in a phone wallet app.`
+                : `No Web3 wallet was detected in this browser. Unlock MetaMask, Rabby, Phantom, or Coinbase Wallet and try again, or open a mobile wallet app above.`,
             );
             return;
           }
-          providerToUse = wallets[0].provider;
-          setActiveProvider(wallets[0]);
-          activeConnected = await connectWalletProvider(wallets[0]);
+          const walletToConnect =
+            (activeProvider && wallets.find((w) => w.id === activeProvider.id)) || wallets[0];
+          providerToUse = walletToConnect.provider;
+          setActiveProvider(walletToConnect);
+          activeConnected = await connectWalletProvider(walletToConnect);
           setConnectedWallet(activeConnected);
         }
 
-        if (paymentMethod === 'Web3 Wallet Signature (EIP-191)') {
+        if (paymentMethod === 'Pay with Integrated Token (ERC-20)') {
+          const tokenPayResult = await payLandWithIntegratedToken(providerToUse, {
+            recipientAddress: buyParcel.ownerWalletAddress,
+            tokenAmount: parcelTokenPrice,
+            parcelRef: buyParcel.parcelRef,
+          });
+          walletTxHash = tokenPayResult.txHash;
+          tokenAmountPaid = tokenPayResult.amountFormatted;
+          paidTokenSymbol = tokenPayResult.symbol;
+          paidTokenAddress = tokenPayResult.tokenAddress;
+          void refreshConnectedTokenBalance(providerToUse, activeConnected.address);
+        } else if (paymentMethod === 'Web3 Wallet Signature (EIP-191)') {
           walletSignature = await signLandPurchaseAuthorization(providerToUse, {
             address: activeConnected.address,
             parcelRef: buyParcel.parcelRef,
@@ -502,7 +661,9 @@ export default function ExploreLandPage() {
             location: `${buyParcel.location}, ${buyParcel.state}`,
             areaSqm: buyParcel.areaSqm,
             priceNgn: buyParcel.priceNgn,
-            priceUsd: getListingPriceUsd(buyParcel),
+            priceUsd: parcelUsdPrice,
+            priceToken: parcelTokenPrice,
+            tokenSymbol: tokenInfo.symbol,
             buyerName: buyerName.trim(),
             sellerWalletAddress: buyParcel.ownerWalletAddress,
           });
@@ -520,7 +681,7 @@ export default function ExploreLandPage() {
           if (!resolvedTokenId) {
             setSubmittingPurchase(false);
             setBuyError(
-              'This parcel has not been minted on LandTitleNFT yet. Enter a minted Token ID or choose Web3 Wallet Signature / On-Chain Escrow.',
+              `This parcel has not been minted on LandTitleNFT yet. Enter a minted Token ID or choose "Pay with ${tokenInfo.symbol} (Integrated ERC-20 Token)" to purchase directly.`,
             );
             return;
           }
@@ -533,6 +694,7 @@ export default function ExploreLandPage() {
           onChainTokenId = transferResult.tokenId;
           feeTokenAmount = transferResult.feePaidFormatted;
           feeApproveTxHash = transferResult.approveTxHash;
+          paidTokenAddress = LAND_FEE_TOKEN_ADDRESS;
 
           updateLandListing(buyParcel.id, {
             ownerWalletAddress: activeConnected.address,
@@ -544,7 +706,9 @@ export default function ExploreLandPage() {
             address: activeConnected.address,
             parcelRef: buyParcel.parcelRef,
             priceNgn: buyParcel.priceNgn,
-            priceUsd: getListingPriceUsd(buyParcel),
+            priceUsd: parcelUsdPrice,
+            priceToken: parcelTokenPrice,
+            tokenSymbol: tokenInfo.symbol,
             sellerWalletAddress: buyParcel.ownerWalletAddress,
           });
         }
@@ -568,7 +732,11 @@ export default function ExploreLandPage() {
       landTitle: buyParcel.title,
       parcelRef: buyParcel.parcelRef,
       priceNgn: buyParcel.priceNgn,
-      priceUsd: getListingPriceUsd(buyParcel),
+      priceUsd: parcelUsdPrice,
+      priceToken: parcelTokenPrice,
+      tokenSymbol: paidTokenSymbol,
+      tokenAmountPaid,
+      tokenAddress: paidTokenAddress,
       buyerUserId: buyerAccount.id,
       buyerName: buyerName.trim(),
       buyerEmail: buyerEmail.trim(),
@@ -790,6 +958,7 @@ export default function ExploreLandPage() {
           {loaded && filteredListings.length > 0 && viewMode === 'map' && (
             <ExploreParcelsMap
               parcels={filteredListings}
+              tokenSymbol={tokenInfo.symbol}
               onInspect={(parcel) => {
                 setInspectVisualTab('map');
                 setInspectParcel(parcel);
@@ -817,13 +986,13 @@ export default function ExploreLandPage() {
                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-[#020305]/85 via-[#020305]/20 to-transparent" />
-                      {getListingPriceUsd(parcel) > 0 && (
+                      {getListingPriceToken(parcel) > 0 && (
                         <div className="absolute top-3 right-3 rounded-md bg-[#020305]/85 backdrop-blur-md border border-[#38BDF8]/40 px-2.5 py-1 text-right font-mono tabular-nums shadow-lg">
-                          <p className="text-xs font-bold text-[#F4F7FB]">
-                            {formatUsd(getListingPriceUsd(parcel))}
+                          <p className="text-xs font-bold text-[#67E8F9]">
+                            {formatListingTokenPrice(parcel, tokenInfo.symbol)}
                           </p>
-                          <p className="text-[10px] font-semibold text-[#67E8F9]">
-                            {formatEthFromUsd(getListingPriceUsd(parcel), 2)}
+                          <p className="text-[10px] font-medium text-[#94A3B8]">
+                            ≈ {formatUsd(getListingPriceUsd(parcel))}
                           </p>
                         </div>
                       )}
@@ -873,13 +1042,13 @@ export default function ExploreLandPage() {
                       {/* Price & Actions */}
                       <div className="pt-3 border-t border-[rgba(91,133,167,0.14)] flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-[11px] text-[#64748B]">Asking Price</p>
-                          <p className="text-lg font-bold font-mono tabular-nums text-[#F4F7FB] leading-tight">
-                            {formatUsd(getListingPriceUsd(parcel))}
+                          <p className="text-[11px] text-[#64748B]">Asking Price ({tokenInfo.symbol})</p>
+                          <p className="text-lg font-bold font-mono tabular-nums text-[#67E8F9] leading-tight">
+                            {formatListingTokenPrice(parcel, tokenInfo.symbol)}
                           </p>
                           {getListingPriceUsd(parcel) > 0 && (
-                            <p className="text-xs font-mono tabular-nums text-[#38BDF8]">
-                              ≈ {formatEthFromUsd(getListingPriceUsd(parcel))}
+                            <p className="text-xs font-mono tabular-nums text-[#94A3B8]">
+                              ≈ {formatUsd(getListingPriceUsd(parcel))}
                             </p>
                           )}
                         </div>
@@ -995,13 +1164,13 @@ export default function ExploreLandPage() {
                   </p>
                 </div>
                 <div className="sm:text-right">
-                  <p className="text-xs text-[#64748B]">Price</p>
-                  <p className="text-2xl font-bold font-mono tabular-nums text-[#F4F7FB]">
-                    {formatUsd(getListingPriceUsd(inspectParcel))}
+                  <p className="text-xs text-[#64748B]">Price ({tokenInfo.symbol} Token)</p>
+                  <p className="text-2xl font-bold font-mono tabular-nums text-[#67E8F9]">
+                    {formatListingTokenPrice(inspectParcel, tokenInfo.symbol)}
                   </p>
                   {getListingPriceUsd(inspectParcel) > 0 && (
-                    <p className="text-xs font-mono tabular-nums text-[#38BDF8] mt-0.5">
-                      ≈ {formatEthFromUsd(getListingPriceUsd(inspectParcel))}
+                    <p className="text-xs font-mono tabular-nums text-[#94A3B8] mt-0.5">
+                      ≈ {formatUsd(getListingPriceUsd(inspectParcel))}
                     </p>
                   )}
                 </div>
@@ -1067,7 +1236,7 @@ export default function ExploreLandPage() {
                   </span>
                   {inspectParcel.ownerWalletAddress && (
                     <p className="font-mono text-[11px] text-[#38BDF8] mt-0.5">
-                      ETH: {formatShortAddress(inspectParcel.ownerWalletAddress)}
+                      LFEE Wallet: {formatShortAddress(inspectParcel.ownerWalletAddress)}
                     </p>
                   )}
                 </div>
@@ -1147,16 +1316,30 @@ export default function ExploreLandPage() {
                   </p>
                   <p className="text-[#94A3B8]">
                     Settlement Amount:{' '}
-                    <span className="font-mono text-[#F4F7FB]">
-                      {formatUsd(getListingPriceUsd(completedOrder))}
+                    <span className="font-mono font-semibold text-[#67E8F9]">
+                      {completedOrder.tokenAmountPaid
+                        ? `${completedOrder.tokenAmountPaid} ${completedOrder.tokenSymbol || tokenInfo.symbol}`
+                        : formatListingTokenPrice(
+                            completedOrder,
+                            completedOrder.tokenSymbol || tokenInfo.symbol,
+                          )}
                     </span>{' '}
-                    <span className="font-mono text-[#38BDF8]">
-                      ({formatEthFromUsd(getListingPriceUsd(completedOrder))})
+                    <span className="font-mono text-[#94A3B8]">
+                      (≈ {formatUsd(getListingPriceUsd(completedOrder))})
                     </span>
                   </p>
                   <p className="text-[#94A3B8]">
                     Method: <span className="text-[#F4F7FB]">{completedOrder.paymentMethod}</span>
                   </p>
+                  {completedOrder.tokenAmountPaid && (
+                    <p className="text-[#94A3B8]">
+                      Paid in Token:{' '}
+                      <span className="font-mono text-emerald-400">
+                        {completedOrder.tokenAmountPaid}{' '}
+                        {completedOrder.tokenSymbol || tokenInfo.symbol}
+                      </span>
+                    </p>
+                  )}
                   {completedOrder.walletAddress && (
                     <p className="text-[#94A3B8]">
                       Web3 Wallet:{' '}
@@ -1196,9 +1379,9 @@ export default function ExploreLandPage() {
                   )}
                   {completedOrder.feeTokenAmount && (
                     <p className="text-[#94A3B8]">
-                      LandFeeToken Transfer Fee:{' '}
+                      {tokenInfo.symbol} Transfer Fee:{' '}
                       <span className="font-mono text-[#F4F7FB]">
-                        {completedOrder.feeTokenAmount} FEE
+                        {completedOrder.feeTokenAmount} {tokenInfo.symbol}
                       </span>
                     </p>
                   )}
@@ -1233,11 +1416,11 @@ export default function ExploreLandPage() {
                     </p>
                   </div>
                   <div className="text-right font-mono tabular-nums shrink-0">
-                    <p className="font-bold text-[#F4F7FB]">
-                      {formatUsd(getListingPriceUsd(buyParcel))}
+                    <p className="font-bold text-[#67E8F9]">
+                      {formatListingTokenPrice(buyParcel, tokenInfo.symbol)}
                     </p>
-                    <p className="text-[11px] font-semibold text-[#38BDF8]">
-                      ≈ {formatEthFromUsd(getListingPriceUsd(buyParcel))}
+                    <p className="text-[11px] font-medium text-[#94A3B8]">
+                      ≈ {formatUsd(getListingPriceUsd(buyParcel))}
                     </p>
                   </div>
                 </div>
@@ -1487,7 +1670,7 @@ export default function ExploreLandPage() {
                 )}
               </div>
             ) : (
-              <form onSubmit={handlePurchaseSubmit} className="mt-5 space-y-4">
+              <form noValidate onSubmit={handlePurchaseSubmit} className="mt-5 space-y-4">
                 <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.20)] px-3.5 py-2 flex items-center justify-between gap-2 text-xs">
                   <span className="inline-flex items-center gap-1.5 text-[#94A3B8] truncate">
                     <User className="h-3.5 w-3.5 text-[#38BDF8] shrink-0" />
@@ -1503,11 +1686,11 @@ export default function ExploreLandPage() {
                     {buyParcel.location} · {buyParcel.areaSqm.toLocaleString()} sqm
                   </span>
                   <div className="text-right font-mono tabular-nums shrink-0">
-                    <p className="font-bold text-[#F4F7FB]">
-                      {formatUsd(getListingPriceUsd(buyParcel))}
+                    <p className="font-bold text-[#67E8F9]">
+                      {formatListingTokenPrice(buyParcel, tokenInfo.symbol)}
                     </p>
-                    <p className="text-[11px] font-semibold text-[#38BDF8]">
-                      ≈ {formatEthFromUsd(getListingPriceUsd(buyParcel))}
+                    <p className="text-[11px] font-medium text-[#94A3B8]">
+                      ≈ {formatUsd(getListingPriceUsd(buyParcel))}
                     </p>
                   </div>
                 </div>
@@ -1518,7 +1701,7 @@ export default function ExploreLandPage() {
                     <div className="flex items-center gap-2">
                       <Wallet className="h-4 w-4 text-[#38BDF8]" />
                       <span className="text-xs font-semibold text-[#F4F7FB]">
-                        Web3 Wallet Connection
+                        {tokenInfo.symbol} Token Wallet Connection
                       </span>
                     </div>
                     {connectedWallet ? (
@@ -1539,48 +1722,173 @@ export default function ExploreLandPage() {
                   </div>
 
                   {connectedWallet ? (
-                    <div className="rounded-md bg-[#0A0F16] border border-emerald-500/30 p-2.5 flex items-center justify-between gap-3 text-xs">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        {connectedWallet.walletIcon ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={connectedWallet.walletIcon}
-                            alt={connectedWallet.walletName}
-                            className="h-6 w-6 rounded-md shrink-0"
-                          />
-                        ) : (
-                          <div className="h-6 w-6 rounded-md bg-[#38BDF8]/15 text-[#38BDF8] flex items-center justify-center shrink-0">
-                            <ShieldCheck className="h-3.5 w-3.5" />
+                    <div className="space-y-2">
+                      <div className="rounded-md bg-[#0A0F16] border border-emerald-500/30 p-2.5 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {connectedWallet.walletIcon ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={connectedWallet.walletIcon}
+                              alt={connectedWallet.walletName}
+                              className="h-6 w-6 rounded-md shrink-0"
+                            />
+                          ) : (
+                            <div className="h-6 w-6 rounded-md bg-[#38BDF8]/15 text-[#38BDF8] flex items-center justify-center shrink-0">
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="font-medium text-[#F4F7FB] truncate">
+                              {connectedWallet.walletName} ·{' '}
+                              <span className="font-mono text-[#67E8F9]">
+                                {formatShortAddress(connectedWallet.address)}
+                              </span>
+                            </p>
+                            <p className="text-[11px] font-mono text-[#94A3B8] truncate">
+                              {connectedWallet.chainName} ·{' '}
+                              {tokenBalance
+                                ? formatTokenAmount(
+                                    Number(tokenBalance.balanceFormatted),
+                                    tokenBalance.symbol,
+                                    4,
+                                  )
+                                : `${connectedWallet.tokenBalance} ${connectedWallet.tokenSymbol || tokenInfo.symbol}`}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => activeProvider && void connectWithWallet(activeProvider)}
+                          className="px-2.5 py-1 rounded bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-[11px] text-[#94A3B8] hover:text-[#F4F7FB] shrink-0"
+                        >
+                          Reconnect
+                        </button>
+                      </div>
+
+                      {/* Integrated ERC-20 Token Balance Strip */}
+                      <div className="rounded-md bg-[#0A0F16] border border-[rgba(56,189,248,0.25)] px-2.5 py-2 space-y-2 text-[11px]">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-[#94A3B8]">
+                              Your <strong className="text-[#67E8F9]">{tokenInfo.symbol}</strong> Token Balance ({connectedWallet.chainName}):
+                            </p>
+                            {tokenBalanceLoading ? (
+                              <p className="font-mono text-[#64748B] flex items-center gap-1 mt-0.5">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Reading on-chain {tokenInfo.symbol} balance…
+                              </p>
+                            ) : tokenBalance ? (
+                              <p className="font-mono font-semibold text-[#F4F7FB] mt-0.5">
+                                {formatTokenAmount(
+                                  Number(tokenBalance.balanceFormatted),
+                                  tokenBalance.symbol,
+                                  4,
+                                )}{' '}
+                                <span
+                                  className={
+                                    Number(tokenBalance.balanceFormatted) >=
+                                    getListingPriceToken(buyParcel)
+                                      ? 'text-emerald-400 font-normal'
+                                      : 'text-amber-300 font-normal'
+                                  }
+                                >
+                                  (
+                                  {Number(tokenBalance.balanceFormatted) >=
+                                  getListingPriceToken(buyParcel)
+                                    ? 'Sufficient to buy'
+                                    : `Need ${formatListingTokenPrice(buyParcel, tokenBalance.symbol)}`}
+                                  )
+                                </span>
+                              </p>
+                            ) : (
+                              <p className="text-amber-300 mt-0.5">
+                                {tokenBalanceError || `Token contract: ${formatShortAddress(LAND_FEE_TOKEN_ADDRESS)}`}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {activeProvider && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void watchLfeeTokenInWallet(activeProvider.provider, {
+                                    address: LAND_FEE_TOKEN_ADDRESS,
+                                    symbol: tokenInfo.symbol,
+                                    decimals: tokenInfo.decimals,
+                                  }).catch((err) => {
+                                    setWalletError(mapWalletError(err));
+                                  });
+                                }}
+                                className="px-2 py-1 rounded bg-[#38BDF8]/10 border border-[#38BDF8]/35 text-[10px] font-medium text-[#67E8F9] hover:bg-[#38BDF8]/20 whitespace-nowrap"
+                                title={`Add ${tokenInfo.symbol} (${LAND_FEE_TOKEN_ADDRESS}) to your wallet`}
+                              >
+                                Add {tokenInfo.symbol}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void refreshConnectedTokenBalance()}
+                              className="px-2 py-1 rounded bg-[#05080D] border border-[rgba(91,133,167,0.25)] text-[#94A3B8] hover:text-[#F4F7FB]"
+                              title="Refresh token balance"
+                            >
+                              <RefreshCw className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {tokenBalanceError && (
+                          <div className="pt-1.5 border-t border-[rgba(91,133,167,0.16)] space-y-1.5">
+                            <p className="text-[10px] font-mono uppercase tracking-wider text-[#94A3B8]">
+                              Switch Wallet Network to Host Token:
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {COMMON_EVM_NETWORKS.map((net) => {
+                                const isCurrentNet =
+                                  connectedWallet.chainId.toLowerCase() === net.chainId.toLowerCase();
+                                return (
+                                  <button
+                                    key={net.chainId}
+                                    type="button"
+                                    disabled={switchingNetwork === net.chainId || isCurrentNet}
+                                    onClick={() => void handleSwitchNetwork(net.chainId)}
+                                    className={`px-2 py-1 rounded text-[10px] font-mono border transition-colors ${
+                                      isCurrentNet
+                                        ? 'bg-[#38BDF8]/15 border-[#38BDF8] text-[#67E8F9]'
+                                        : 'bg-[#05080D] border-[rgba(91,133,167,0.28)] text-[#94A3B8] hover:text-[#F4F7FB] hover:border-[#38BDF8]/60'
+                                    }`}
+                                  >
+                                    {switchingNetwork === net.chainId ? 'Switching…' : net.chainName}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
-                        <div className="min-w-0">
-                          <p className="font-medium text-[#F4F7FB] truncate">
-                            {connectedWallet.walletName} ·{' '}
-                            <span className="font-mono text-[#67E8F9]">
-                              {formatShortAddress(connectedWallet.address)}
-                            </span>
-                          </p>
-                          <p className="text-[11px] font-mono text-[#94A3B8] truncate">
-                            {connectedWallet.chainName} · {connectedWallet.balanceEth} ETH
-                          </p>
-                        </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => activeProvider && void connectWithWallet(activeProvider)}
-                        className="px-2.5 py-1 rounded bg-[#05080D] border border-[rgba(91,133,167,0.28)] text-[11px] text-[#94A3B8] hover:text-[#F4F7FB] shrink-0"
-                      >
-                        Reconnect
-                      </button>
                     </div>
                   ) : (
-                    <p className="text-[11px] text-[#94A3B8] leading-relaxed">
-                      {walletConnecting
-                        ? 'Approve the connection prompt in your browser extension or mobile wallet app.'
-                        : detectedWallets.length > 0
-                        ? 'Select any detected Web3 wallet on your device to connect and authorize this acquisition.'
-                        : 'Trigger any Web3 wallet installed on your PC or mobile phone to link your titleholder address.'}
-                    </p>
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-[#94A3B8] leading-relaxed">
+                        {walletConnecting
+                          ? 'Approve the connection prompt in your browser extension or mobile wallet app.'
+                          : detectedWallets.length > 0
+                          ? 'Select any detected Web3 wallet on your device to connect and authorize this acquisition.'
+                          : inIframe
+                          ? 'Browser wallet extensions cannot inject inside embedded preview frames. Open this page in a full browser tab to trigger your extension, or launch a phone wallet below.'
+                          : 'Trigger any Web3 wallet installed on your PC or mobile phone to link your titleholder address.'}
+                      </p>
+                      {inIframe && detectedWallets.length === 0 && (
+                        <a
+                          href={`/explore?buyParcel=${encodeURIComponent(buyParcel.id)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full h-9 px-3 rounded-lg bg-[#38BDF8]/15 border border-[#38BDF8]/50 hover:border-[#38BDF8] text-xs font-semibold text-[#67E8F9] inline-flex items-center justify-center gap-2 transition-colors"
+                        >
+                          <span>Open in Full Browser Tab to Trigger Wallet</span>
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      )}
+                    </div>
                   )}
 
                   {walletError && (
@@ -1679,7 +1987,13 @@ export default function ExploreLandPage() {
                         </p>
                         <button
                           type="button"
-                          onClick={triggerDeviceEthereumWalletIntent}
+                          onClick={() =>
+                            triggerDeviceEthereumWalletIntent(
+                              paymentMethod === 'Pay with Integrated Token (ERC-20)'
+                                ? getParcelErc20IntentUri(buyParcel)
+                                : undefined,
+                            )
+                          }
                           className="text-[11px] font-mono text-[#38BDF8] hover:underline inline-flex items-center gap-1"
                         >
                           <span>Trigger Phone Default (ethereum:)</span>
@@ -1701,12 +2015,6 @@ export default function ExploreLandPage() {
                     </div>
                   )}
                 </div>
-
-                {buyError && (
-                  <div className="rounded-lg bg-rose-950/30 border border-rose-500/40 px-3 py-2 text-xs text-rose-300">
-                    {buyError}
-                  </div>
-                )}
 
                 <div>
                   <label htmlFor="buyerName" className="block text-xs text-[#94A3B8] mb-1">
@@ -1766,6 +2074,9 @@ export default function ExploreLandPage() {
                     }
                     className="w-full h-10 px-3 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
                   >
+                    <option value="Pay with Integrated Token (ERC-20)" className="bg-[#0A0F16]">
+                      Pay with {tokenInfo.name} ({tokenInfo.symbol} ERC-20 Token)
+                    </option>
                     <option value="Web3 Wallet Signature (EIP-191)" className="bg-[#0A0F16]">
                       Web3 Wallet Signature (EIP-191 Authorization)
                     </option>
@@ -1773,7 +2084,7 @@ export default function ExploreLandPage() {
                       Web3 Wallet On-Chain Escrow (Send Tx)
                     </option>
                     <option value="LandRegistry On-Chain Title Transfer" className="bg-[#0A0F16]">
-                      LandRegistry On-Chain Title Transfer (LandFeeToken)
+                      LandRegistry On-Chain Title Transfer ({tokenInfo.symbol} Fee)
                     </option>
                     <option value="Bank Escrow Transfer" className="bg-[#0A0F16]">
                       Bank Escrow Transfer
@@ -1786,6 +2097,34 @@ export default function ExploreLandPage() {
                     </option>
                   </select>
                 </div>
+
+                {paymentMethod === 'Pay with Integrated Token (ERC-20)' && (
+                  <div className="rounded-lg bg-[#05080D] border border-[#38BDF8]/30 p-3 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#94A3B8]">Token Contract:</span>
+                      <span className="font-mono text-[#67E8F9]">
+                        {tokenInfo.symbol} ({formatShortAddress(LAND_FEE_TOKEN_ADDRESS)})
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#94A3B8]">Total Token Payment:</span>
+                      <span className="font-mono font-bold text-emerald-400">
+                        {formatListingTokenPrice(buyParcel, tokenInfo.symbol)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#94A3B8]">Recipient Wallet:</span>
+                      <span className="font-mono text-[#F4F7FB]">
+                        {buyParcel.ownerWalletAddress
+                          ? formatShortAddress(buyParcel.ownerWalletAddress)
+                          : `Registry Escrow (${formatShortAddress(LAND_REGISTRY_ADDRESS)})`}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#94A3B8] pt-1">
+                      Transfers <span className="font-mono text-[#67E8F9]">{formatListingTokenPrice(buyParcel, tokenInfo.symbol)}</span> directly from your connected wallet using your integrated ERC-20 token.
+                    </p>
+                  </div>
+                )}
 
                 {paymentMethod === 'LandRegistry On-Chain Title Transfer' && (
                   <div className="rounded-lg bg-[#05080D] border border-[#38BDF8]/30 p-3 space-y-2">
@@ -1801,7 +2140,7 @@ export default function ExploreLandPage() {
                       className="w-full h-9 px-3 rounded-[8px] bg-[#0A0F16] border border-[rgba(148,163,184,0.22)] text-xs font-mono text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
                     />
                     <p className="text-[11px] text-[#94A3B8]">
-                      Automatically approves the required <span className="font-mono text-[#38BDF8]">LandFeeToken</span> transfer fee and calls <span className="font-mono text-[#38BDF8]">LandRegistry.transferTitle</span> via ethers.js.
+                      Automatically approves the required <span className="font-mono text-[#38BDF8]">{tokenInfo.symbol}</span> transfer fee and calls <span className="font-mono text-[#38BDF8]">LandRegistry.transferTitle</span> via ethers.js.
                     </p>
                   </div>
                 )}
@@ -1820,6 +2159,56 @@ export default function ExploreLandPage() {
                   />
                 </div>
 
+                {buyError && (
+                  <div
+                    ref={buyErrorBottomRef}
+                    role="alert"
+                    className="rounded-lg bg-rose-950/40 border border-rose-500/50 px-3.5 py-2.5 text-xs text-rose-200 space-y-2"
+                  >
+                    <p>{buyError}</p>
+                    {inIframe && !connectedWallet && detectedWallets.length === 0 && (
+                      <a
+                        href={`/explore?buyParcel=${encodeURIComponent(buyParcel.id)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#38BDF8] text-[#020305] font-semibold text-[11px] hover:bg-[#67E8F9]"
+                      >
+                        <span>Open in New Tab to Unlock Browser Wallet</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                    {buyError.includes('Chain ID') && activeProvider?.provider && (
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {COMMON_EVM_NETWORKS.map((net) => (
+                          <button
+                            key={net.chainId}
+                            type="button"
+                            disabled={switchingNetwork === net.chainId}
+                            onClick={() => void handleSwitchNetwork(net.chainId)}
+                            className="px-2.5 py-1 rounded bg-[#0A0F16] border border-[#38BDF8]/40 text-[10px] font-mono text-[#67E8F9] hover:border-[#38BDF8]"
+                          >
+                            {switchingNetwork === net.chainId
+                              ? 'Switching…'
+                              : `Switch to ${net.chainName}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {buyError.includes('Insufficient') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentMethod('Web3 Wallet Signature (EIP-191)');
+                          setBuyError(null);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#0A0F16] border border-[#38BDF8]/50 text-[#67E8F9] font-medium text-[11px] hover:border-[#38BDF8]"
+                      >
+                        <span>Authorize Purchase via Wallet Signature Instead</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex items-center gap-3 pt-2">
                   <button
                     type="button"
@@ -1831,16 +2220,20 @@ export default function ExploreLandPage() {
                   <button
                     type="submit"
                     disabled={submittingPurchase}
-                    className="flex-1 h-11 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] disabled:opacity-60 inline-flex items-center justify-center gap-2"
+                    className="flex-1 h-11 rounded-[8px] bg-[#38BDF8] text-[#020305] text-sm font-semibold hover:bg-[#67E8F9] disabled:opacity-60 inline-flex items-center justify-center gap-2 px-3 whitespace-nowrap"
                   >
                     {submittingPurchase && <Loader2 className="h-4 w-4 animate-spin" />}
                     <span>
                       {submittingPurchase
-                        ? 'Confirming in Wallet…'
-                        : paymentMethod.startsWith('Web3 Wallet') ||
-                            paymentMethod === 'LandRegistry On-Chain Title Transfer'
-                        ? 'Authorize & Buy Land'
-                        : 'Confirm Land Purchase'}
+                        ? paymentMethod === 'Pay with Integrated Token (ERC-20)'
+                          ? `Confirm in Wallet (${tokenInfo.symbol})…`
+                          : 'Confirming in Wallet…'
+                        : paymentMethod === 'Pay with Integrated Token (ERC-20)'
+                          ? `Pay ${formatListingTokenPrice(buyParcel, tokenInfo.symbol)} & Buy`
+                          : paymentMethod.startsWith('Web3 Wallet') ||
+                              paymentMethod === 'LandRegistry On-Chain Title Transfer'
+                            ? 'Authorize & Buy Land'
+                            : 'Confirm Land Purchase'}
                     </span>
                   </button>
                 </div>

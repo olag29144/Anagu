@@ -3,15 +3,22 @@
 import { useEffect, useState } from 'react';
 import {
   discoverAllWallets,
+  formatShortAddress,
   getMobileWalletDeepLinksForPath,
   getSnapshotDetectedWallets,
   isMobileDevice,
+  isRunningInIframe,
+  mapWalletError,
   subscribeWalletDiscovery,
   triggerDeviceEthereumWalletIntent,
+  watchLfeeTokenInWallet,
   type ConnectedWalletState,
   type DetectedWalletProvider,
 } from '@/lib/web3-wallet';
+import { LAND_FEE_TOKEN_ADDRESS } from '@/lib/contracts';
 import {
+  CheckCircle2,
+  Coins,
   ExternalLink,
   Loader2,
   RefreshCw,
@@ -51,10 +58,20 @@ export function WalletConnectModal({
   const [internalWallets, setInternalWallets] = useState<DetectedWalletProvider[]>([]);
   const [scanning, setScanning] = useState(false);
   const [mobile, setMobile] = useState(false);
+  const [inIframe, setInIframe] = useState(false);
+  const [directTabUrl, setDirectTabUrl] = useState('');
+  const [addingToken, setAddingToken] = useState(false);
+  const [tokenWatchStatus, setTokenWatchStatus] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setMobile(isMobileDevice());
+    setInIframe(isRunningInIframe());
+    if (typeof window !== 'undefined') {
+      setDirectTabUrl(
+        deepLinkPath ? `${window.location.origin}${deepLinkPath}` : window.location.href,
+      );
+    }
     setInternalWallets(getSnapshotDetectedWallets());
 
     const unsubscribe = subscribeWalletDiscovery((wallets) => {
@@ -74,7 +91,7 @@ export function WalletConnectModal({
       cancelled = true;
       unsubscribe();
     };
-  }, [open]);
+  }, [open, deepLinkPath]);
 
   if (!open) return null;
 
@@ -100,12 +117,46 @@ export function WalletConnectModal({
 
   const mobileLinks = getMobileWalletDeepLinksForPath(deepLinkPath);
 
+  const activeProviderForConnected = connectedWallet
+    ? walletsToShow.find((w) => w.id === connectedWallet.walletId)?.provider ??
+      walletsToShow[0]?.provider
+    : undefined;
+
+  const handleAddLfeeToken = async () => {
+    if (!connectedWallet) return;
+    setTokenWatchStatus(null);
+    const provider = activeProviderForConnected;
+    if (!provider) {
+      setTokenWatchStatus(
+        'Open this page in your wallet browser or re-select your wallet above to import LFEE.',
+      );
+      return;
+    }
+    setAddingToken(true);
+    try {
+      const added = await watchLfeeTokenInWallet(provider, {
+        address: connectedWallet.tokenAddress || LAND_FEE_TOKEN_ADDRESS,
+        symbol: connectedWallet.tokenSymbol || 'LFEE',
+        decimals: connectedWallet.tokenDecimals ?? 18,
+      });
+      setTokenWatchStatus(
+        added
+          ? `${connectedWallet.tokenSymbol || 'LFEE'} token added to ${connectedWallet.walletName}.`
+          : `${connectedWallet.tokenSymbol || 'LFEE'} token import was dismissed in your wallet.`,
+      );
+    } catch (err) {
+      setTokenWatchStatus(mapWalletError(err));
+    } finally {
+      setAddingToken(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-label={title ?? 'Connect Web3 Wallet'}
+      aria-label={title ?? 'Connect LFEE Token Wallet'}
     >
       <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl bg-[#0A0F16] border border-[rgba(91,133,167,0.32)] p-6 space-y-5 shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-[rgba(91,133,167,0.18)] pb-3.5">
@@ -113,14 +164,17 @@ export function WalletConnectModal({
             <h3 className="text-base font-bold text-[#F4F7FB] flex items-center gap-2">
               <Wallet className="h-4 w-4 text-[#38BDF8]" />
               <span>
-                {title ?? (connectedWallet ? 'Connected Web3 Wallet' : 'Connect Web3 Wallet')}
+                {title ??
+                  (connectedWallet
+                    ? 'Connected LFEE Token Wallet'
+                    : 'Connect LFEE Token Wallet')}
               </span>
             </h3>
             <p className="text-xs text-[#94A3B8] mt-0.5">
               {subtitle ??
                 (connectedWallet
-                  ? 'Manage your linked browser or mobile Web3 wallet.'
-                  : 'Automatically detects any Web3 wallet in your browser or phone.')}
+                  ? `Connected to LFEE Token (${formatShortAddress(LAND_FEE_TOKEN_ADDRESS)}).`
+                  : `Connects your wallet directly to LFEE Token (${formatShortAddress(LAND_FEE_TOKEN_ADDRESS)}), not ETH.`)}
             </p>
           </div>
           <button
@@ -170,22 +224,66 @@ export function WalletConnectModal({
               <span className="text-[11px] font-mono text-emerald-400 shrink-0">Connected</span>
             </div>
 
-            <div className="flex items-center justify-between text-xs pt-2 border-t border-[rgba(91,133,167,0.16)] text-[#94A3B8]">
-              <span>{connectedWallet.chainName}</span>
-              <span className="font-mono tabular-nums text-[#F4F7FB]">
-                {connectedWallet.balanceEth} ETH
-              </span>
+            <div className="space-y-2 pt-2 border-t border-[rgba(91,133,167,0.16)] text-xs">
+              <div className="flex items-center justify-between text-[#94A3B8]">
+                <span>{connectedWallet.chainName}</span>
+                <span className="font-mono font-semibold tabular-nums text-[#67E8F9]">
+                  {connectedWallet.tokenBalance} {connectedWallet.tokenSymbol || 'LFEE'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-[#64748B]">
+                <span className="font-mono truncate">
+                  {connectedWallet.tokenSymbol || 'LFEE'} Contract:{' '}
+                  {formatShortAddress(connectedWallet.tokenAddress || LAND_FEE_TOKEN_ADDRESS)}
+                </span>
+                <span
+                  className={
+                    connectedWallet.tokenDeployedOnChain
+                      ? 'text-emerald-400 font-mono shrink-0'
+                      : 'text-amber-300 font-mono shrink-0'
+                  }
+                >
+                  {connectedWallet.tokenDeployedOnChain ? 'LFEE Ready' : 'Wrong Network'}
+                </span>
+              </div>
             </div>
 
-            {onDisconnect && (
+            {tokenWatchStatus && (
+              <p className="text-[11px] text-[#67E8F9] bg-[#0A0F16] border border-[#38BDF8]/30 rounded-md px-2.5 py-1.5 flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                <span>{tokenWatchStatus}</span>
+              </p>
+            )}
+
+            <div className="flex flex-col gap-2">
               <button
                 type="button"
-                onClick={onDisconnect}
-                className="w-full h-9 rounded-lg bg-[#0A0F16] border border-rose-500/35 hover:border-rose-400 text-xs font-medium text-rose-300"
+                disabled={addingToken}
+                onClick={() => void handleAddLfeeToken()}
+                className="w-full h-9 rounded-lg bg-[#0A0F16] border border-[#38BDF8]/40 hover:border-[#38BDF8] text-xs font-medium text-[#67E8F9] inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
               >
-                Disconnect Wallet
+                {addingToken ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Coins className="h-3.5 w-3.5" />
+                )}
+                <span>
+                  {addingToken
+                    ? 'Sending LFEE Token to Wallet…'
+                    : `Add ${connectedWallet.tokenSymbol || 'LFEE'} Token to Wallet`}
+                </span>
               </button>
-            )}
+
+              {onDisconnect && (
+                <button
+                  type="button"
+                  onClick={onDisconnect}
+                  className="w-full h-9 rounded-lg bg-[#0A0F16] border border-rose-500/35 hover:border-rose-400 text-xs font-medium text-rose-300"
+                >
+                  Disconnect Wallet
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -236,17 +334,32 @@ export function WalletConnectModal({
               })}
             </div>
           ) : (
-            <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.20)] p-3.5 text-xs text-[#94A3B8] space-y-1.5">
+            <div className="rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.20)] p-3.5 text-xs text-[#94A3B8] space-y-2.5">
               <p className="font-medium text-[#E2E8F0]">
-                {mobile
+                {inIframe
+                  ? 'Browser extensions cannot inject into embedded preview frames.'
+                  : mobile
                   ? 'No in-app mobile wallet browser detected in this tab.'
                   : 'No browser wallet extension responded yet.'}
               </p>
               <p className="text-[11px] text-[#64748B]">
-                {mobile
+                {inIframe
+                  ? 'Open this page in a full browser tab so MetaMask, Rabby, Phantom, or Coinbase Wallet can trigger normally, or launch a phone wallet app below.'
+                  : mobile
                   ? 'Tap "Detect Installed Phone Wallet" or open this page inside any wallet app below.'
                   : 'Unlock your browser wallet (MetaMask, Rabby, Phantom, Coinbase, Trust, OKX, Bitget) and click Re-scan, or open in your phone wallet app below.'}
               </p>
+              {inIframe && directTabUrl && (
+                <a
+                  href={directTabUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full h-9 px-3 rounded-lg bg-[#38BDF8]/15 border border-[#38BDF8]/50 hover:border-[#38BDF8] text-xs font-semibold text-[#67E8F9] inline-flex items-center justify-center gap-2 transition-colors"
+                >
+                  <span>Open in Full Browser Tab to Trigger Wallet</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
             </div>
           )}
 
@@ -278,7 +391,7 @@ export function WalletConnectModal({
             </p>
             <button
               type="button"
-              onClick={triggerDeviceEthereumWalletIntent}
+              onClick={() => triggerDeviceEthereumWalletIntent()}
               className="text-[11px] font-mono text-[#38BDF8] hover:underline inline-flex items-center gap-1"
             >
               <span>Trigger Phone Wallet</span>
@@ -288,7 +401,7 @@ export function WalletConnectModal({
 
           <button
             type="button"
-            onClick={triggerDeviceEthereumWalletIntent}
+            onClick={() => triggerDeviceEthereumWalletIntent()}
             className="w-full h-9 px-3 rounded-lg bg-[#05080D] border border-[#38BDF8]/35 hover:border-[#38BDF8] text-xs font-medium text-[#67E8F9] inline-flex items-center justify-center gap-2 transition-colors"
           >
             <Smartphone className="h-3.5 w-3.5" />

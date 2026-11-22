@@ -16,11 +16,13 @@ import {
   type OpenMapLayerId,
 } from '@/lib/openmap-tiles';
 import {
-  formatEthFromUsd,
+  formatListingTokenPrice,
   formatUsd,
+  getListingPriceToken,
   getListingPriceUsd,
   type LandListing,
 } from '@/lib/land-store';
+import { useIntegratedToken } from '@/lib/use-integrated-token';
 
 interface MappableParcelItem {
   parcel: LandListing;
@@ -32,6 +34,7 @@ function ExploreParcelsMapCanvasInline({
   layerId,
   activeParcelId,
   fitSignal,
+  tokenSymbol,
   onSelectParcel,
   onCursorMove,
 }: {
@@ -39,6 +42,7 @@ function ExploreParcelsMapCanvasInline({
   layerId: OpenMapLayerId;
   activeParcelId: string | null;
   fitSignal: number;
+  tokenSymbol: string;
   onSelectParcel: (parcel: LandListing) => void;
   onCursorMove?: (pt: LatLngPoint | null) => void;
 }) {
@@ -137,10 +141,9 @@ function ExploreParcelsMapCanvasInline({
         poly.addTo(overlay);
       }
 
-      const parcelUsd = getListingPriceUsd(parcel);
       const priceText = isSold
         ? 'SOLD'
-        : `${formatUsd(parcelUsd)} · ${formatEthFromUsd(parcelUsd, 2)}`;
+        : formatListingTokenPrice(parcel, tokenSymbol);
       const badgeBg = isSold
         ? 'background:#1E293B;color:#FDA4AF;border:1px solid rgba(244,63,94,0.55);'
         : isActive
@@ -158,7 +161,7 @@ function ExploreParcelsMapCanvasInline({
       marker.on('click', () => onSelectRef.current(parcel));
       marker.addTo(overlay);
     });
-  }, [mappableParcels, activeParcelId, mapReady]);
+  }, [mappableParcels, activeParcelId, mapReady, tokenSymbol]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -184,11 +187,19 @@ function ExploreParcelsMapCanvasInline({
 
 interface ExploreParcelsMapProps {
   parcels: LandListing[];
+  tokenSymbol?: string;
   onInspect: (parcel: LandListing) => void;
   onBuy: (parcel: LandListing) => void;
 }
 
-export function ExploreParcelsMap({ parcels, onInspect, onBuy }: ExploreParcelsMapProps) {
+export function ExploreParcelsMap({
+  parcels,
+  tokenSymbol: tokenSymbolProp,
+  onInspect,
+  onBuy,
+}: ExploreParcelsMapProps) {
+  const { tokenInfo } = useIntegratedToken();
+  const activeSymbol = tokenSymbolProp || tokenInfo.symbol;
   const [activeParcel, setActiveParcel] = useState<LandListing | null>(null);
   const [layerId, setLayerId] = useState<OpenMapLayerId>('osm');
   const [fitSignal, setFitSignal] = useState(0);
@@ -255,6 +266,7 @@ export function ExploreParcelsMap({ parcels, onInspect, onBuy }: ExploreParcelsM
           layerId={layerId}
           activeParcelId={activeParcel?.id ?? null}
           fitSignal={fitSignal}
+          tokenSymbol={activeSymbol}
           onSelectParcel={(parcel) => setActiveParcel(parcel)}
           onCursorMove={setCursorCoords}
         />
@@ -298,12 +310,12 @@ export function ExploreParcelsMap({ parcels, onInspect, onBuy }: ExploreParcelsM
                 {activeParcel.areaSqm.toLocaleString()} sqm
               </span>
               <div className="text-right font-mono tabular-nums">
-                <p className="font-bold text-[#F4F7FB] text-sm">
-                  {formatUsd(getListingPriceUsd(activeParcel))}
+                <p className="font-bold text-[#67E8F9] text-sm">
+                  {formatListingTokenPrice(activeParcel, activeSymbol)}
                 </p>
-                {getListingPriceUsd(activeParcel) > 0 && (
-                  <p className="text-[11px] text-[#38BDF8]">
-                    ≈ {formatEthFromUsd(getListingPriceUsd(activeParcel))}
+                {getListingPriceToken(activeParcel) > 0 && (
+                  <p className="text-[11px] text-[#94A3B8]">
+                    ≈ {formatUsd(getListingPriceUsd(activeParcel))}
                   </p>
                 )}
               </div>

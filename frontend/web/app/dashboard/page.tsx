@@ -12,14 +12,18 @@ import {
   updateLandListing,
   getPurchaseOrders,
   getListingPriceUsd,
+  getListingPriceToken,
+  tokenToUsd,
   formatUsd,
-  formatEthFromUsd,
+  formatListingTokenPrice,
+  formatTokenAmount,
   formatFileSize,
   NGN_PER_USD,
   type LandListing,
   type LandDocument,
   type LandPurchaseOrder,
 } from '@/lib/land-store';
+import { useIntegratedToken } from '@/lib/use-integrated-token';
 import {
   INITIAL_USER_ACCOUNTS,
   getActiveUserAccount,
@@ -128,7 +132,7 @@ export default function UserDashboardPage() {
   const [inspectVisualTab, setInspectVisualTab] = useState<'map' | 'photo'>('map');
   const [previewDoc, setPreviewDoc] = useState<LandDocument | null>(null);
   const [editingPriceLand, setEditingPriceLand] = useState<LandListing | null>(null);
-  const [newPriceUsd, setNewPriceUsd] = useState('');
+  const [newPriceToken, setNewPriceToken] = useState('');
 
   // Profile edit state
   const [profileName, setProfileName] = useState('');
@@ -145,6 +149,7 @@ export default function UserDashboardPage() {
   const [walletError, setWalletError] = useState<string | null>(null);
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const { tokenInfo } = useIntegratedToken(activeProvider?.provider ?? null);
 
   const loadData = () => {
     const user = getActiveUserAccount();
@@ -356,24 +361,30 @@ export default function UserDashboardPage() {
     }
 
     for (const order of myPurchases) {
+      const tokenDisplay = order.tokenAmountPaid
+        ? `${order.tokenAmountPaid} ${order.tokenSymbol || tokenInfo.symbol}`
+        : formatListingTokenPrice(order, order.tokenSymbol || tokenInfo.symbol);
       events.push({
         id: `act-buy-${order.id}`,
         timestamp: order.createdAt,
         category: 'payment',
         title: `Land Purchase Payment: ${order.landTitle}`,
-        detail: `${order.id} · ${formatUsd(getListingPriceUsd(order))} (${formatEthFromUsd(getListingPriceUsd(order))}) via ${order.paymentMethod}`,
+        detail: `${order.id} · ${tokenDisplay} (≈ ${formatUsd(getListingPriceUsd(order))}) via ${order.paymentMethod}`,
         statusLabel: order.status === 'completed' ? 'Payment Completed' : 'Pending Settlement',
         statusTone: order.status === 'completed' ? 'emerald' : 'amber',
       });
     }
 
     for (const order of myIncomingOrders) {
+      const tokenDisplay = order.tokenAmountPaid
+        ? `${order.tokenAmountPaid} ${order.tokenSymbol || tokenInfo.symbol}`
+        : formatListingTokenPrice(order, order.tokenSymbol || tokenInfo.symbol);
       events.push({
         id: `act-sell-${order.id}`,
         timestamp: order.createdAt,
         category: 'payment',
         title: `Buyer Order Received from ${order.buyerName}`,
-        detail: `${order.landTitle} (${order.parcelRef}) · ${formatUsd(getListingPriceUsd(order))}`,
+        detail: `${order.landTitle} (${order.parcelRef}) · ${tokenDisplay} (≈ ${formatUsd(getListingPriceUsd(order))})`,
         statusLabel: order.status === 'completed' ? 'Payment Settled' : 'Pending Settlement',
         statusTone: order.status === 'completed' ? 'emerald' : 'amber',
       });
@@ -382,7 +393,7 @@ export default function UserDashboardPage() {
     return events.sort(
       (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
     );
-  }, [myLands, myPurchases, myIncomingOrders]);
+  }, [myLands, myPurchases, myIncomingOrders, tokenInfo.symbol]);
 
   const handleSignIn = (e: FormEvent) => {
     e.preventDefault();
@@ -479,17 +490,21 @@ export default function UserDashboardPage() {
   const handleSavePrice = (e: FormEvent) => {
     e.preventDefault();
     if (!editingPriceLand) return;
-    const usd = Number(newPriceUsd.replace(/[^0-9.]/g, ''));
-    if (!usd || usd <= 0) return;
+    const tokens = Number(newPriceToken.replace(/[^0-9.]/g, ''));
+    if (!tokens || tokens <= 0) return;
+    const roundedTokens = Math.round(tokens * 100) / 100;
+    const usd = tokenToUsd(roundedTokens);
     const next = updateLandListing(editingPriceLand.id, {
       forSale: true,
       saleStatus: editingPriceLand.saleStatus === 'sold' ? 'sold' : 'available',
-      priceUsd: Math.round(usd),
-      priceNgn: Math.round(usd) * NGN_PER_USD,
+      priceToken: roundedTokens,
+      tokenSymbol: tokenInfo.symbol,
+      priceUsd: usd,
+      priceNgn: usd * NGN_PER_USD,
     });
     setAllListings(next);
     setEditingPriceLand(null);
-    setNewPriceUsd('');
+    setNewPriceToken('');
   };
 
   const handleUploadExtraDoc = async (land: LandListing, e: ChangeEvent<HTMLInputElement>) => {
@@ -865,7 +880,7 @@ export default function UserDashboardPage() {
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <label htmlFor="signup-wallet" className="text-xs text-[#94A3B8]">
-                        ETH Wallet Address (Optional)
+                        {tokenInfo.symbol} Token Wallet Address (Optional)
                       </label>
                       <button
                         type="button"
@@ -1530,14 +1545,14 @@ export default function UserDashboardPage() {
                                 </span>
                               </div>
 
-                              {land.forSale && usd > 0 && (
+                              {land.forSale && getListingPriceToken(land) > 0 && (
                                 <div className="pt-1 font-mono tabular-nums">
-                                  <span className="text-sm font-bold text-emerald-400">
-                                    {formatUsd(usd)}
+                                  <span className="text-sm font-bold text-[#67E8F9]">
+                                    {formatListingTokenPrice(land, tokenInfo.symbol)}
                                   </span>
                                   <span className="mx-1.5 text-[#475569]">·</span>
-                                  <span className="text-xs text-[#38BDF8]">
-                                    {formatEthFromUsd(usd, 3)}
+                                  <span className="text-xs text-[#94A3B8]">
+                                    ≈ {formatUsd(usd)}
                                   </span>
                                 </div>
                               )}
@@ -1592,8 +1607,9 @@ export default function UserDashboardPage() {
                                   <button
                                     type="button"
                                     onClick={() => {
+                                      const tokenAmt = getListingPriceToken(land);
                                       setEditingPriceLand(land);
-                                      setNewPriceUsd(usd > 0 ? String(usd) : '');
+                                      setNewPriceToken(tokenAmt > 0 ? String(tokenAmt) : '');
                                     }}
                                     className="h-8 px-2.5 rounded-lg bg-[#05080D] border border-[rgba(91,133,167,0.25)] hover:border-[#38BDF8]/50 text-xs text-[#94A3B8] hover:text-[#F4F7FB] inline-flex items-center gap-1 whitespace-nowrap"
                                     title="Update asking price"
@@ -1663,11 +1679,16 @@ export default function UserDashboardPage() {
                               <p className="font-mono text-[#64748B]">{order.parcelRef}</p>
                             </td>
                             <td className="px-5 py-4 font-mono tabular-nums">
-                              <p className="font-semibold text-[#F4F7FB]">
-                                {formatUsd(getListingPriceUsd(order))}
+                              <p className="font-semibold text-[#67E8F9]">
+                                {order.tokenAmountPaid
+                                  ? `${order.tokenAmountPaid} ${order.tokenSymbol || tokenInfo.symbol}`
+                                  : formatListingTokenPrice(
+                                      order,
+                                      order.tokenSymbol || tokenInfo.symbol,
+                                    )}
                               </p>
-                              <p className="text-[11px] text-[#38BDF8]">
-                                {formatEthFromUsd(getListingPriceUsd(order))}
+                              <p className="text-[11px] text-[#94A3B8]">
+                                ≈ {formatUsd(getListingPriceUsd(order))}
                               </p>
                             </td>
                             <td className="px-5 py-4 text-[#94A3B8]">
@@ -1734,11 +1755,16 @@ export default function UserDashboardPage() {
                               <p className="font-mono text-[#64748B]">{order.parcelRef}</p>
                             </td>
                             <td className="px-5 py-4 font-mono tabular-nums">
-                              <p className="font-semibold text-emerald-400">
-                                {formatUsd(getListingPriceUsd(order))}
+                              <p className="font-semibold text-[#67E8F9]">
+                                {order.tokenAmountPaid
+                                  ? `${order.tokenAmountPaid} ${order.tokenSymbol || tokenInfo.symbol}`
+                                  : formatListingTokenPrice(
+                                      order,
+                                      order.tokenSymbol || tokenInfo.symbol,
+                                    )}
                               </p>
-                              <p className="text-[11px] text-[#38BDF8]">
-                                {formatEthFromUsd(getListingPriceUsd(order))}
+                              <p className="text-[11px] text-[#94A3B8]">
+                                ≈ {formatUsd(getListingPriceUsd(order))}
                               </p>
                             </td>
                             <td className="px-5 py-4">
@@ -1934,7 +1960,7 @@ export default function UserDashboardPage() {
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                      <label className="text-xs text-[#94A3B8]">ETH Wallet Address</label>
+                      <label className="text-xs text-[#94A3B8]">{tokenInfo.symbol} Token Wallet Address</label>
                       <button
                         type="button"
                         onClick={handleConnectWalletClick}
@@ -2102,7 +2128,7 @@ export default function UserDashboardPage() {
                     {inspectLand.saleStatus === 'sold'
                       ? 'Sold / Order Placed'
                       : inspectLand.forSale
-                        ? `Listed (${formatUsd(getListingPriceUsd(inspectLand))})`
+                        ? `Listed (${formatListingTokenPrice(inspectLand, tokenInfo.symbol)})`
                         : 'Private Custody Only'}
                   </p>
                 </div>
@@ -2193,17 +2219,24 @@ export default function UserDashboardPage() {
               <div>
                 <p className="text-xs text-[#94A3B8] mb-2">{editingPriceLand.title}</p>
                 <label className="block text-xs text-[#94A3B8] mb-1.5">
-                  Asking Price ($ USD)
+                  Asking Price ({tokenInfo.symbol} Token)
                 </label>
                 <input
                   type="number"
-                  min="1"
+                  min="0.01"
+                  step="any"
                   required
-                  value={newPriceUsd}
-                  onChange={(e) => setNewPriceUsd(e.target.value)}
+                  value={newPriceToken}
+                  onChange={(e) => setNewPriceToken(e.target.value)}
                   placeholder="e.g. 50000"
                   className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm font-mono text-[#F4F7FB] focus:border-[#38BDF8] focus:outline-none"
                 />
+                {Number(newPriceToken) > 0 && (
+                  <p className="mt-1.5 text-[11px] font-mono text-[#94A3B8]">
+                    {formatTokenAmount(Number(newPriceToken), tokenInfo.symbol)} · ≈{' '}
+                    {formatUsd(tokenToUsd(Number(newPriceToken)))}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-3">
                 <button

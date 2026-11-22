@@ -37,6 +37,8 @@ export interface LandListing {
   documentNumber: string;
   priceNgn: number;
   priceUsd?: number;
+  priceToken?: number;
+  tokenSymbol?: string;
   forSale: boolean;
   saleStatus: 'available' | 'sold' | 'not_for_sale';
   approvalStatus: 'approved' | 'pending_review' | 'rejected';
@@ -57,6 +59,7 @@ export interface LandListing {
 }
 
 export type PurchasePaymentMethod =
+  | 'Pay with Integrated Token (ERC-20)'
   | 'Web3 Wallet Signature (EIP-191)'
   | 'Web3 Wallet On-Chain Escrow'
   | 'LandRegistry On-Chain Title Transfer'
@@ -71,6 +74,10 @@ export interface LandPurchaseOrder {
   parcelRef: string;
   priceNgn: number;
   priceUsd?: number;
+  priceToken?: number;
+  tokenSymbol?: string;
+  tokenAmountPaid?: string;
+  tokenAddress?: string;
   buyerUserId?: string;
   buyerName: string;
   buyerEmail: string;
@@ -521,15 +528,24 @@ export function addLandListing(
     (d) => d.type.startsWith('image/') && d.dataUrl,
   );
   const resolvedUsd =
-    input.priceUsd !== undefined
+    input.priceUsd !== undefined && input.priceUsd > 0
       ? input.priceUsd
-      : input.priceNgn > 0
-        ? Math.round(input.priceNgn / NGN_PER_USD)
+      : input.priceToken !== undefined && input.priceToken > 0
+        ? tokenToUsd(input.priceToken)
+        : input.priceNgn > 0
+          ? Math.round(input.priceNgn / NGN_PER_USD)
+          : 0;
+  const resolvedToken =
+    input.priceToken !== undefined && input.priceToken > 0
+      ? input.priceToken
+      : resolvedUsd > 0
+        ? resolvedUsd * TOKENS_PER_USD
         : 0;
 
   const newListing: LandListing = {
     ...input,
     priceUsd: resolvedUsd,
+    priceToken: resolvedToken,
     id: `LND-${new Date().getFullYear()}-${num}`,
     parcelRef: input.parcelRef?.trim() || `NG-${stateCode}-LND-${new Date().getFullYear()}-${num}`,
     imageUrl:
@@ -596,24 +612,56 @@ export function createPurchaseOrder(
     createdAt: new Date().toISOString(),
   };
   savePurchaseOrders([order, ...orders]);
-  updateLandListing(input.landId, { saleStatus: 'sold' });
+  updateLandListing(input.landId, {
+    saleStatus: 'sold',
+    ...(isPaidOnChain && input.walletAddress
+      ? { ownerWalletAddress: input.walletAddress }
+      : {}),
+  });
   return order;
 }
 
 export const NGN_PER_USD = 1600;
 export const USD_PER_ETH = 3200;
+export const TOKENS_PER_USD = 1;
+export const DEFAULT_TOKEN_SYMBOL =
+  process.env.NEXT_PUBLIC_LAND_FEE_TOKEN_SYMBOL?.trim() || 'LFEE';
 
 export function getListingPriceUsd(item: {
   priceUsd?: number;
   priceNgn?: number;
+  priceToken?: number;
 }): number {
   if (typeof item.priceUsd === 'number' && item.priceUsd > 0) {
     return item.priceUsd;
+  }
+  if (typeof item.priceToken === 'number' && item.priceToken > 0) {
+    return tokenToUsd(item.priceToken);
   }
   if (typeof item.priceNgn === 'number' && item.priceNgn > 0) {
     return Math.round(item.priceNgn / NGN_PER_USD);
   }
   return 0;
+}
+
+export function getListingPriceToken(item: {
+  priceToken?: number;
+  priceUsd?: number;
+  priceNgn?: number;
+}): number {
+  if (typeof item.priceToken === 'number' && item.priceToken > 0) {
+    return item.priceToken;
+  }
+  const usd = getListingPriceUsd(item);
+  if (usd > 0) {
+    return usd * TOKENS_PER_USD;
+  }
+  return 0;
+}
+
+export function tokenToUsd(tokenAmount: number): number {
+  if (!tokenAmount || Number.isNaN(tokenAmount) || tokenAmount <= 0) return 0;
+  return Math.round(tokenAmount / TOKENS_PER_USD);
 }
 
 export function usdToEth(usdAmount: number): number {
@@ -630,6 +678,45 @@ export function formatUsd(usdAmount: number): string {
     currency: 'USD',
     maximumFractionDigits: 0,
   }).format(usdAmount);
+}
+
+export function formatTokenAmount(
+  tokenAmount: number,
+  symbol = DEFAULT_TOKEN_SYMBOL,
+  maxDecimals = 2,
+): string {
+  const safeSymbol = symbol?.trim() || DEFAULT_TOKEN_SYMBOL;
+  if (!tokenAmount || Number.isNaN(tokenAmount) || tokenAmount <= 0) {
+    return `0 ${safeSymbol}`;
+  }
+  const formatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: maxDecimals,
+  }).format(tokenAmount);
+  return `${formatted} ${safeSymbol}`;
+}
+
+export function formatTokenPrice(
+  tokenAmount: number,
+  symbol = DEFAULT_TOKEN_SYMBOL,
+  maxDecimals = 2,
+): string {
+  if (!tokenAmount || Number.isNaN(tokenAmount) || tokenAmount <= 0) {
+    return 'Price on request';
+  }
+  return formatTokenAmount(tokenAmount, symbol, maxDecimals);
+}
+
+export function formatListingTokenPrice(
+  item: {
+    priceToken?: number;
+    priceUsd?: number;
+    priceNgn?: number;
+  },
+  symbol = DEFAULT_TOKEN_SYMBOL,
+  maxDecimals = 2,
+): string {
+  return formatTokenPrice(getListingPriceToken(item), symbol, maxDecimals);
 }
 
 export function formatEthFromUsd(usdAmount: number, decimals = 4): string {
