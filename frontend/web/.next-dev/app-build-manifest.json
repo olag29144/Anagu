@@ -16,17 +16,17 @@
       "static/chunks/main-app.js",
       "static/chunks/app/not-found.js"
     ],
-    "/explore/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/css/app/explore/page.css",
-      "static/chunks/app/explore/page.js"
-    ],
     "/dashboard/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/css/app/dashboard/page.css",
       "static/chunks/app/dashboard/page.js"
+    ],
+    "/explore/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/css/app/explore/page.css",
+      "static/chunks/app/explore/page.js"
     ],
     "/register/page": [
       "static/chunks/webpack.js",
@@ -38,6 +38,21 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/admin/page.js"
+    ],
+    "/citizen/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/citizen/page.js"
+    ],
+    "/registrar/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/registrar/page.js"
+    ],
+    "/governor/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/governor/page.js"
     ]
   }
 }
