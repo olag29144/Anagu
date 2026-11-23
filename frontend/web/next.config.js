@@ -3,8 +3,11 @@ process.env.NEXT_IGNORE_INCORRECT_LOCKFILE = '1';
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone',
+  ...(process.env.VERCEL ? {} : { output: 'standalone' }),
   distDir: process.env.NEXT_DIST_DIR || '.next',
+  images: {
+    unoptimized: true,
+  },
   env: {},
   poweredByHeader: false,
 };

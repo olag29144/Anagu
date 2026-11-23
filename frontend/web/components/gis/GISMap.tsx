@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useRef, useState } from 'react';
 
@@ -71,25 +71,28 @@ export default function GISMap({
           // Add click handler for drawing boundaries
           map.on('click', (e: any) => {
             if (!L) return;
-            
+
             const newPoint = { lat: e.latlng.lat, lng: e.latlng.lng };
-            const newPoints = [...points, newPoint];
-            setPoints(newPoints);
-            
+            setPoints((prev) => {
+              const newPoints = [...prev, newPoint];
+
+              // Update polygon
+              if (newPoints.length >= 3) {
+                if (polygonRef.current) {
+                  map.removeLayer(polygonRef.current);
+                }
+                polygonRef.current = L.polygon(
+                  newPoints.map((p) => [p.lat, p.lng]),
+                  { color: '#38BDF8', fillColor: '#38BDF8', fillOpacity: 0.2 },
+                ).addTo(map);
+              }
+
+              return newPoints;
+            });
+
             // Add marker
             const marker = L.marker([e.latlng.lat, e.latlng.lng]).addTo(map);
             markersRef.current.push(marker);
-            
-            // Update polygon
-            if (newPoints.length >= 3) {
-              if (polygonRef.current) {
-                map.removeLayer(polygonRef.current);
-              }
-              polygonRef.current = L.polygon(
-                newPoints.map(p => [p.lat, p.lng]),
-                { color: '#38BDF8', fillColor: '#38BDF8', fillOpacity: 0.2 }
-              ).addTo(map);
-            }
           });
 
           setIsLoading(false);
