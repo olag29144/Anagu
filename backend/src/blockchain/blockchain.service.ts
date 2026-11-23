@@ -36,10 +36,11 @@ export class BlockchainService implements OnModuleInit {
       this.configService.getOrThrow<string>('BESU_RPC_URL'),
     );
 
-    this.registrarWallet = new ethers.Wallet(
-      this.configService.getOrThrow<string>('REGISTRAR_PRIVATE_KEY'),
-      this.provider,
-    );
+    const registrarKey =
+      this.configService.get<string>('REGISTRAR_PRIVATE_KEY')?.trim() ||
+      this.configService.getOrThrow<string>('GOVERNOR_PRIVATE_KEY');
+
+    this.registrarWallet = new ethers.Wallet(registrarKey, this.provider);
 
     // Load the LandTitleNFT ABI from the compiled Hardhat artifacts.
     // The artifacts directory only exists after `npx hardhat compile`, so we

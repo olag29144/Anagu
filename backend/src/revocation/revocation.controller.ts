@@ -70,7 +70,8 @@ export class RevocationController {
   }> {
     const governorId: string = req.user?.id ?? 'system';
     const governorPrivateKey =
-      this.configService.getOrThrow<string>('GOVERNOR_PRIVATE_KEY');
+      this.configService.get<string>('GOVERNOR_PRIVATE_KEY')?.trim() ||
+      this.configService.getOrThrow<string>('REGISTRAR_PRIVATE_KEY');
 
     await this.revocationService.revoke(
       tokenId,

@@ -10,10 +10,9 @@ const REGISTRAR_PRIVATE_KEY = process.env["REGISTRAR_PRIVATE_KEY"] ?? "";
 const GOVERNOR_PRIVATE_KEY = process.env["GOVERNOR_PRIVATE_KEY"] ?? "";
 
 // Provide a dummy account list when keys are not set (compile-only / CI environments)
-const besuAccounts =
-  REGISTRAR_PRIVATE_KEY && GOVERNOR_PRIVATE_KEY
-    ? [REGISTRAR_PRIVATE_KEY, GOVERNOR_PRIVATE_KEY]
-    : [];
+const besuAccounts = Array.from(
+  new Set([REGISTRAR_PRIVATE_KEY.trim(), GOVERNOR_PRIVATE_KEY.trim()].filter(Boolean)),
+);
 
 const config: HardhatUserConfig = {
   solidity: {

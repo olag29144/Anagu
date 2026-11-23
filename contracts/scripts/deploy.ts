@@ -19,7 +19,10 @@ import * as fs from "fs";
 import * as path from "path";
 
 async function main(): Promise<void> {
-  const [deployer, registrar, governor] = await ethers.getSigners();
+  const signers = await ethers.getSigners();
+  const deployer = signers[0];
+  const registrar = signers[1] ?? deployer;
+  const governor = signers[2] ?? registrar;
 
   console.log("Deployer:", deployer.address);
   console.log("Registrar:", registrar.address);
