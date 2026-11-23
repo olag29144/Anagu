@@ -19,20 +19,31 @@ interface SupabaseJwtPayload extends JWTPayload {
 
 @Injectable()
 export class SupabaseAuthGuard implements CanActivate {
-  private readonly jwks: ReturnType<typeof createRemoteJWKSet>;
+  private readonly jwks: ReturnType<typeof createRemoteJWKSet> | null;
 
   constructor(
     private readonly config: ConfigService,
     private readonly supabase: SupabaseClientService,
   ) {
-    const jwksUrl = this.config.getOrThrow<string>('SUPABASE_JWKS_URL');
-    this.jwks = createRemoteJWKSet(
-      new URL(jwksUrl),
-      { cacheMaxAge: 600_000 } as RemoteJWKSetOptions,
-    );
+    const explicitJwksUrl = this.config.get<string>('SUPABASE_JWKS_URL')?.trim();
+    const supabaseUrl = this.config.get<string>('SUPABASE_URL')?.trim();
+    const jwksUrl =
+      explicitJwksUrl ||
+      (supabaseUrl ? `${supabaseUrl.replace(/\/+$/, '')}/auth/v1/.well-known/jwks.json` : '');
+
+    this.jwks = jwksUrl
+      ? createRemoteJWKSet(
+          new URL(jwksUrl),
+          { cacheMaxAge: 600_000 } as RemoteJWKSetOptions,
+        )
+      : null;
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    if (!this.jwks) {
+      throw new UnauthorizedException('Authentication service is not configured');
+    }
+
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     const token = this.extractBearer(request.headers['authorization'] as string | undefined);
 

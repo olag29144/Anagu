@@ -640,6 +640,44 @@ export function ensureUserAccountForRegistration(input: {
   return created;
 }
 
+export function syncSupabaseUserToLocalProfile(input: {
+  email: string;
+  fullName?: string;
+  phone?: string;
+  role?: string;
+  walletAddress?: string;
+}): UserAccount {
+  const cleanEmail = normalizeEmail(input.email);
+  const mappedRole: UserRole =
+    input.role === 'registrar' || input.role === 'governor' ? input.role : 'user';
+  const accounts = getUserAccounts();
+  const existing = accounts.find(
+    (u) => cleanEmail !== '' && normalizeEmail(u.email) === cleanEmail,
+  );
+
+  if (existing) {
+    setActiveUserAccount(existing.id);
+    return existing;
+  }
+
+  const now = new Date().toISOString();
+  const created: UserAccount = {
+    id: `USR-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`,
+    fullName: input.fullName?.trim() || cleanEmail.split('@')[0] || 'Anagu User',
+    email: cleanEmail || 'Not provided',
+    phone: input.phone?.trim() || 'Not provided',
+    role: mappedRole,
+    walletAddress: input.walletAddress?.trim() || undefined,
+    status: 'active',
+    createdAt: now,
+    lastActiveAt: now,
+  };
+
+  saveUserAccounts([created, ...accounts]);
+  setActiveUserAccount(created.id);
+  return created;
+}
+
 export function updateUserProfile(
   userId: string,
   updates: Partial<Pick<UserAccount, 'fullName' | 'email' | 'phone' | 'walletAddress'>>,

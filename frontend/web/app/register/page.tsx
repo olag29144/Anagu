@@ -24,6 +24,8 @@ import {
   type LandListing,
 } from '@/lib/land-store';
 import { useIntegratedToken } from '@/lib/use-integrated-token';
+import { apiCall } from '@/lib/api';
+import { createClient } from '@/lib/supabase';
 import {
   getActiveUserAccount,
   ensureUserAccountForRegistration,
@@ -580,6 +582,42 @@ export default function RegisterLandPage() {
 
     setExistingParcels(getLandListings());
     setRegisteredLand(created);
+
+    // Best-effort sync to NestJS backend pipeline when signed in with real Supabase Auth
+    try {
+      const supabase = createClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (
+        session?.access_token &&
+        !session.access_token.startsWith('mock-jwt-token-') &&
+        gisPolygon.length >= 3
+      ) {
+        const closedRing: [number, number][] = gisPolygon.map((p) => [p.lng, p.lat]);
+        const first = closedRing[0];
+        const last = closedRing[closedRing.length - 1];
+        if (first && last && (first[0] !== last[0] || first[1] !== last[1])) {
+          closedRing.push([first[0], first[1]]);
+        }
+        await apiCall('/applications', {
+          method: 'POST',
+          body: JSON.stringify({
+            ownerName: ownerName.trim(),
+            ownerWalletAddress:
+              ownerWalletAddress.trim() || '0x0000000000000000000000000000000000000000',
+            documentNumber: documentNumber.trim() || created.parcelRef,
+            documentType,
+            issuingAuthority: `${state} Lands Bureau`,
+            parcelRef: created.parcelRef,
+            parcelRing: { coordinates: closedRing },
+          }),
+        });
+      }
+    } catch {
+      // Local registration succeeded; backend sync is non-blocking
+    }
+
     setSubmitting(false);
   };
 

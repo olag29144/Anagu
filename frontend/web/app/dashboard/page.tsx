@@ -25,12 +25,18 @@ import {
 } from '@/lib/land-store';
 import { useIntegratedToken } from '@/lib/use-integrated-token';
 import {
+  createClient,
+  clearDemoSession,
+  isSupabaseConfigured,
+} from '@/lib/supabase';
+import {
   INITIAL_USER_ACCOUNTS,
   getActiveUserAccount,
   setActiveUserAccount,
   clearActiveUserAccount,
   signInUser,
   createUserAccount,
+  syncSupabaseUserToLocalProfile,
   updateUserProfile,
   getLandsForUser,
   getBuyerOrdersForUser,
@@ -117,12 +123,16 @@ export default function UserDashboardPage() {
   // Auth form state (when not signed in)
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [signupRole, setSignupRole] = useState<UserRole>('user');
   const [signupInviteCode, setSignupInviteCode] = useState('');
   const [signupName, setSignupName] = useState('');
   const [signupPhone, setSignupPhone] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
   const [signupWallet, setSignupWallet] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Dashboard Sidebar & UI state
@@ -395,25 +405,78 @@ export default function UserDashboardPage() {
     );
   }, [myLands, myPurchases, myIncomingOrders, tokenInfo.symbol]);
 
-  const handleSignIn = (e: FormEvent) => {
+  const handleSignIn = async (e: FormEvent) => {
     e.preventDefault();
     setAuthError(null);
-    if (!loginIdentifier.trim()) {
+    setAuthNotice(null);
+    const identifier = loginIdentifier.trim();
+    if (!identifier) {
       setAuthError('Please enter your email address or phone number.');
       return;
     }
-    const { user, error } = signInUser(loginIdentifier);
+
+    if (isSupabaseConfigured() && identifier.includes('@')) {
+      if (!loginPassword) {
+        const localOnly = signInUser(identifier);
+        if (localOnly.user) {
+          setLoginIdentifier('');
+          loadData();
+          return;
+        }
+        setAuthError('Please enter your password to sign in with your email.');
+        return;
+      }
+
+      setAuthSubmitting(true);
+      try {
+        clearDemoSession();
+        const supabase = createClient();
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: identifier,
+          password: loginPassword,
+        });
+        if (error || !data.user) {
+          setAuthError(error?.message || 'Invalid email or password.');
+          return;
+        }
+        const meta = (data.user.user_metadata ?? {}) as Record<string, unknown>;
+        const appMeta = (data.user.app_metadata ?? {}) as Record<string, unknown>;
+        syncSupabaseUserToLocalProfile({
+          email: data.user.email || identifier,
+          fullName: typeof meta.full_name === 'string' ? meta.full_name : undefined,
+          phone: typeof meta.phone === 'string' ? meta.phone : undefined,
+          role:
+            typeof appMeta.role === 'string'
+              ? appMeta.role
+              : typeof meta.role === 'string'
+                ? meta.role
+                : undefined,
+          walletAddress:
+            typeof meta.wallet_address === 'string' ? meta.wallet_address : undefined,
+        });
+        setLoginIdentifier('');
+        setLoginPassword('');
+        loadData();
+        return;
+      } finally {
+        setAuthSubmitting(false);
+      }
+    }
+
+    const { user, error } = signInUser(identifier);
     if (error || !user) {
       setAuthError(error || 'Unable to sign in.');
       return;
     }
     setLoginIdentifier('');
+    setLoginPassword('');
     loadData();
   };
 
-  const handleSignUp = (e: FormEvent) => {
+  const handleSignUp = async (e: FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    setAuthNotice(null);
 
     if (signupRole === 'registrar' || signupRole === 'governor') {
       const check = validateRoleInviteCode(signupInviteCode, signupRole);
@@ -439,6 +502,53 @@ export default function UserDashboardPage() {
       return;
     }
 
+    const supabaseReady = isSupabaseConfigured();
+    if (supabaseReady) {
+      if (!signupEmail.trim()) {
+        setAuthError('Email address is required to register an account.');
+        return;
+      }
+      if (signupPassword.length < 6) {
+        setAuthError('Please choose a password of at least 6 characters.');
+        return;
+      }
+
+      setAuthSubmitting(true);
+      try {
+        clearDemoSession();
+        const supabase = createClient();
+        const { data, error: signUpErr } = await supabase.auth.signUp({
+          email: signupEmail.trim(),
+          password: signupPassword,
+          options: {
+            data: {
+              full_name: signupName.trim(),
+              phone: signupPhone.trim(),
+              role: signupRole === 'user' ? 'citizen' : signupRole,
+              wallet_address: signupWallet.trim() || undefined,
+            },
+          },
+        });
+
+        if (signUpErr) {
+          setAuthError(signUpErr.message);
+          return;
+        }
+
+        if (!data.session) {
+          setAuthNotice(
+            `Account created for ${signupEmail.trim()}. Please check your email to confirm your address, then sign in.`,
+          );
+          setSignupPassword('');
+          setAuthMode('signin');
+          setLoginIdentifier(signupEmail.trim());
+          return;
+        }
+      } finally {
+        setAuthSubmitting(false);
+      }
+    }
+
     const { user, error } = createUserAccount({
       fullName: signupName,
       phone: signupPhone,
@@ -455,6 +565,7 @@ export default function UserDashboardPage() {
     setSignupName('');
     setSignupPhone('');
     setSignupEmail('');
+    setSignupPassword('');
     setSignupWallet('');
     setSignupInviteCode('');
     setSignupRole('user');
@@ -463,12 +574,15 @@ export default function UserDashboardPage() {
 
   const handleQuickDemoSignIn = (userId: string) => {
     setAuthError(null);
+    setAuthNotice(null);
     setActiveUserAccount(userId);
     loadData();
   };
 
   const handleSignOut = () => {
     clearActiveUserAccount();
+    clearDemoSession();
+    void createClient().auth.signOut();
     setActiveUser(null);
     setInspectLand(null);
     setSidebarOpen(false);
@@ -679,6 +793,15 @@ export default function UserDashboardPage() {
                 </button>
               </div>
 
+              {authNotice && (
+                <div
+                  role="status"
+                  className="rounded-lg bg-emerald-950/30 border border-emerald-500/40 px-3.5 py-2.5 text-xs text-emerald-300"
+                >
+                  {authNotice}
+                </div>
+              )}
+
               {authError && (
                 <div
                   role="alert"
@@ -808,7 +931,7 @@ export default function UserDashboardPage() {
               </div>
 
               {authMode === 'signin' ? (
-                <form onSubmit={handleSignIn} className="space-y-4">
+                <form onSubmit={(e) => void handleSignIn(e)} className="space-y-4">
                   <div>
                     <label htmlFor="user-identifier" className="block text-xs text-[#94A3B8] mb-1.5">
                       Email Address or Phone Number
@@ -818,7 +941,20 @@ export default function UserDashboardPage() {
                       type="text"
                       value={loginIdentifier}
                       onChange={(e) => setLoginIdentifier(e.target.value)}
-                      placeholder="e.g. estates@adelekeholdings.ng or +234 803 412 8890"
+                      placeholder="e.g. name@example.com or +234 803 412 8890"
+                      className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="user-password" className="block text-xs text-[#94A3B8] mb-1.5">
+                      Password {isSupabaseConfigured() ? '*' : '(Optional for local demo)'}
+                    </label>
+                    <input
+                      id="user-password"
+                      type="password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="Enter your password"
                       className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                     />
                     <p className="mt-1.5 text-[11px] text-[#64748B]">
@@ -827,13 +963,14 @@ export default function UserDashboardPage() {
                   </div>
                   <button
                     type="submit"
-                    className="w-full h-11 rounded-[8px] bg-[#38BDF8] hover:bg-[#67E8F9] text-[#020305] text-sm font-semibold transition-colors"
+                    disabled={authSubmitting}
+                    className="w-full h-11 rounded-[8px] bg-[#38BDF8] hover:bg-[#67E8F9] text-[#020305] text-sm font-semibold transition-colors disabled:opacity-60"
                   >
-                    Open My Land Dashboard
+                    {authSubmitting ? 'Signing In…' : 'Open My Land Dashboard'}
                   </button>
                 </form>
               ) : (
-                <form onSubmit={handleSignUp} className="space-y-4">
+                <form onSubmit={(e) => void handleSignUp(e)} className="space-y-4">
                   <div>
                     <label htmlFor="signup-name" className="block text-xs text-[#94A3B8] mb-1.5">
                       Full Name or Company Name *
@@ -865,17 +1002,33 @@ export default function UserDashboardPage() {
                     </div>
                     <div>
                       <label htmlFor="signup-email" className="block text-xs text-[#94A3B8] mb-1.5">
-                        Email Address (Optional)
+                        Email Address {isSupabaseConfigured() ? '*' : '(Optional)'}
                       </label>
                       <input
                         id="signup-email"
                         type="email"
+                        required={isSupabaseConfigured()}
                         value={signupEmail}
                         onChange={(e) => setSignupEmail(e.target.value)}
                         placeholder="you@example.com"
                         className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
                       />
                     </div>
+                  </div>
+                  <div>
+                    <label htmlFor="signup-password" className="block text-xs text-[#94A3B8] mb-1.5">
+                      Password {isSupabaseConfigured() ? '* (min 6 characters)' : '(Optional for local demo)'}
+                    </label>
+                    <input
+                      id="signup-password"
+                      type="password"
+                      required={isSupabaseConfigured()}
+                      minLength={6}
+                      value={signupPassword}
+                      onChange={(e) => setSignupPassword(e.target.value)}
+                      placeholder="Create a password (min 6 characters)"
+                      className="w-full h-11 px-3.5 rounded-[8px] bg-[#05080D] border border-[rgba(148,163,184,0.22)] text-sm text-[#F4F7FB] placeholder-[#526174] focus:border-[#38BDF8] focus:outline-none"
+                    />
                   </div>
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -907,9 +1060,12 @@ export default function UserDashboardPage() {
                   </div>
                   <button
                     type="submit"
-                    className="w-full h-11 rounded-[8px] bg-[#38BDF8] hover:bg-[#67E8F9] text-[#020305] text-sm font-semibold transition-colors"
+                    disabled={authSubmitting}
+                    className="w-full h-11 rounded-[8px] bg-[#38BDF8] hover:bg-[#67E8F9] text-[#020305] text-sm font-semibold transition-colors disabled:opacity-60"
                   >
-                    Create {getRoleLabel(signupRole)} Account &amp; Continue
+                    {authSubmitting
+                      ? 'Creating Account…'
+                      : `Create ${getRoleLabel(signupRole)} Account & Continue`}
                   </button>
                 </form>
               )}

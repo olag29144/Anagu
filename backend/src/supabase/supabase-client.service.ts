@@ -5,13 +5,22 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 @Injectable()
 export class SupabaseClientService implements OnModuleInit {
   private readonly logger = new Logger(SupabaseClientService.name);
-  private client!: SupabaseClient;
+  private client?: SupabaseClient;
 
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
-    const url = this.config.getOrThrow<string>('SUPABASE_URL');
-    const serviceRoleKey = this.config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
+    const url = this.config.get<string>('SUPABASE_URL')?.trim();
+    const serviceRoleKey =
+      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY')?.trim() ||
+      this.config.get<string>('SUPABASE_SECRET_KEY')?.trim();
+
+    if (!url || !serviceRoleKey) {
+      this.logger.warn(
+        'Supabase configuration missing (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY) — database queries will fail until configured.',
+      );
+      return;
+    }
 
     this.client = createClient(url, serviceRoleKey, {
       auth: {
@@ -25,6 +34,7 @@ export class SupabaseClientService implements OnModuleInit {
   }
 
   private async verifyConnection(): Promise<void> {
+    if (!this.client) return;
     try {
       // Use a simple system-level query that works without application tables
       const { error } = await this.client
@@ -50,7 +60,7 @@ export class SupabaseClientService implements OnModuleInit {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   from(table: string): ReturnType<SupabaseClient['from']> {
-    return this.client.from(table);
+    return this.raw.from(table);
   }
 
   /**
@@ -61,11 +71,16 @@ export class SupabaseClientService implements OnModuleInit {
     fn: string,
     args?: Record<string, unknown>,
   ): ReturnType<SupabaseClient['rpc']> {
-    return this.client.rpc(fn, args);
+    return this.raw.rpc(fn, args);
   }
 
   /** Expose the raw client for advanced use-cases (storage, realtime, etc.) */
   get raw(): SupabaseClient {
+    if (!this.client) {
+      throw new Error(
+        'SupabaseClientService is not configured (set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY).',
+      );
+    }
     return this.client;
   }
 }

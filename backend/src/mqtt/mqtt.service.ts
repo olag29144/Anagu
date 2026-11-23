@@ -30,12 +30,14 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   };
 
   async onModuleInit(): Promise<void> {
-    if (this.config.get<string>('MQTT_DISABLED') === 'true') {
-      this.logger.warn('MQTT disabled; continuing without broker connection');
+    const brokerUrl = this.config.get<string>('MQTT_BROKER_URL')?.trim();
+    if (this.config.get<string>('MQTT_DISABLED') === 'true' || !brokerUrl) {
+      this.logger.warn(
+        'MQTT disabled or MQTT_BROKER_URL not set; continuing without broker connection',
+      );
       return;
     }
 
-    const brokerUrl = this.config.getOrThrow<string>('MQTT_BROKER_URL');
     const client = connect(brokerUrl);
     this.client = client;
     client.on('connect', this.handleReconnect);

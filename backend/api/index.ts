@@ -1,4 +1,4 @@
-﻿import { NestFactory } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
 let app: any;
@@ -9,9 +9,18 @@ async function bootstrap() {
       logger: ['error', 'warn'],
       abortOnError: false 
     });
+    const rawOrigins = process.env['CORS_ORIGIN']?.trim();
+    const origin = rawOrigins
+      ? rawOrigins
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      : true;
+
     app.enableCors({
-      origin: '*',
-      methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+      origin,
+      methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      allowedHeaders: 'Content-Type,Authorization',
       credentials: true,
     });
     await app.init();

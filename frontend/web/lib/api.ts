@@ -6,50 +6,117 @@ import {
   saveStoredTitles,
 } from './supabase';
 
+const FALLBACK_SENTINEL = Symbol('api-fallback');
+
+async function executeBackendFetch<T>(
+  url: string,
+  options: RequestInit | undefined,
+  headers: Record<string, string>,
+): Promise<T | typeof FALLBACK_SENTINEL> {
+  const response = await fetch(url, {
+    ...options,
+    headers,
+  });
+
+  if (response.ok) {
+    if (response.status === 204) {
+      return undefined as unknown as T;
+    }
+    const text = await response.text();
+    if (!text) {
+      return undefined as unknown as T;
+    }
+    return JSON.parse(text) as T;
+  }
+
+  let parsedBody: Record<string, unknown> | null = null;
+  try {
+    parsedBody = (await response.json()) as Record<string, unknown>;
+  } catch {
+    parsedBody = null;
+  }
+
+  if (parsedBody?.fallback === true) {
+    return FALLBACK_SENTINEL;
+  }
+
+  const rawMessage = parsedBody?.message ?? parsedBody?.error;
+  const message = Array.isArray(rawMessage)
+    ? rawMessage.join(', ')
+    : typeof rawMessage === 'string' && rawMessage.trim()
+      ? rawMessage
+      : `Backend request failed (${response.status})`;
+
+  throw new Error(message);
+}
+
 /**
  * Typed fetch wrapper that forwards bearer token to backend.
- * Includes seamless mock fallback if backend is offline/unreachable in demo mode.
+ * Uses NEXT_PUBLIC_BACKEND_URL directly when set (falling back to /api/backend proxy),
+ * or /api/backend directly for server-side BACKEND_URL deployments.
+ * Falls back to local demo simulation when no backend is configured or in demo mode.
  */
 export async function apiCall<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+  const directBackendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.trim().replace(/\/+$/, '');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
 
-  if (backendUrl) {
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+  const supabase = createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...(options?.headers as Record<string, string>),
-    };
+  const isMockDemoToken = Boolean(session?.access_token?.startsWith('mock-jwt-token-'));
+  if (isMockDemoToken) {
+    return handleDemoApiFallback<T>(normalizedPath, options);
+  }
 
-    if (session?.access_token) {
-      headers['Authorization'] = 'Bearer ' + session.access_token;
-    }
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string>),
+  };
 
+  if (session?.access_token) {
+    headers['Authorization'] = `Bearer ${session.access_token}`;
+  }
+
+  if (directBackendUrl) {
     try {
-      const response = await fetch(backendUrl + path, {
-        ...options,
+      const result = await executeBackendFetch<T>(
+        `${directBackendUrl}${normalizedPath}`,
+        options,
         headers,
-      });
-
-      if (response.ok) {
-        if (response.status === 204) {
-          return undefined as unknown as T;
-        }
-        return response.json() as Promise<T>;
+      );
+      if (result !== FALLBACK_SENTINEL) {
+        return result;
       }
-    } catch {
-      // Backend offline / not reachable — fall through to demo mock handler
+    } catch (err) {
+      // Only fall through on network/CORS failures; rethrow structured HTTP errors from the backend
+      if (!(err instanceof TypeError)) {
+        throw err;
+      }
     }
   }
 
-  // Demo Fallback Simulation
-  return handleDemoApiFallback<T>(path, options);
+  try {
+    const proxyResult = await executeBackendFetch<T>(
+      `/api/backend${normalizedPath}`,
+      options,
+      headers,
+    );
+    if (proxyResult !== FALLBACK_SENTINEL) {
+      return proxyResult;
+    }
+  } catch (err) {
+    if (!(err instanceof TypeError)) {
+      throw err;
+    }
+  }
+
+  // Demo Fallback Simulation when backend is unconfigured/offline
+  return handleDemoApiFallback<T>(normalizedPath, options);
 }
 
 function handleDemoApiFallback<T>(path: string, options?: RequestInit): T {

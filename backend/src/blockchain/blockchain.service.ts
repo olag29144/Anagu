@@ -32,22 +32,28 @@ export class BlockchainService implements OnModuleInit {
   // ---------------------------------------------------------------------------
 
   async onModuleInit(): Promise<void> {
-    this.provider = new ethers.JsonRpcProvider(
-      this.configService.getOrThrow<string>('BESU_RPC_URL'),
-    );
-
+    const rpcUrl = this.configService.get<string>('BESU_RPC_URL')?.trim();
     const registrarKey =
       this.configService.get<string>('REGISTRAR_PRIVATE_KEY')?.trim() ||
-      this.configService.getOrThrow<string>('GOVERNOR_PRIVATE_KEY');
+      this.configService.get<string>('GOVERNOR_PRIVATE_KEY')?.trim();
+    const contractAddress = this.configService
+      .get<string>('LAND_TITLE_NFT_ADDRESS')
+      ?.trim();
 
+    if (!rpcUrl || !registrarKey || !contractAddress) {
+      this.logger.warn(
+        'Blockchain configuration incomplete (BESU_RPC_URL, REGISTRAR_PRIVATE_KEY/GOVERNOR_PRIVATE_KEY, LAND_TITLE_NFT_ADDRESS) — running without on-chain contract binding.',
+      );
+      return;
+    }
+
+    this.provider = new ethers.JsonRpcProvider(rpcUrl);
     this.registrarWallet = new ethers.Wallet(registrarKey, this.provider);
 
     // Load the LandTitleNFT ABI from the compiled Hardhat artifacts.
     // The artifacts directory only exists after `npx hardhat compile`, so we
     // gracefully skip initialisation when the file is absent (e.g. CI without
     // a contracts compile step).
-    const contractAddress =
-      this.configService.getOrThrow<string>('LAND_TITLE_NFT_ADDRESS');
     const abi: ethers.InterfaceAbi | null = this.loadAbi();
 
     if (abi === null) {
