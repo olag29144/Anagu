@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Menu, X, MapPin, Home, User, UserPlus, LogOut } from 'lucide-react';
+import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 import {
   getActiveUserAccount,
   clearActiveUserAccount,
@@ -104,8 +105,14 @@ export function Navbar() {
             </nav>
           )}
 
-          {/* Zone 3: User Account Action (no Register Land button at the top when signed in) */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* Zone 3: Notifications & User Account Action */}
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+            <NotificationCenter
+              audience={activeUser?.role ?? 'all'}
+              userId={activeUser?.id}
+              userEmail={activeUser?.email}
+              variant="cyber"
+            />
             {activeUser ? (
               <Link
                 href="/dashboard"

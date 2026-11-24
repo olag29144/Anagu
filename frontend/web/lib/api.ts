@@ -5,6 +5,7 @@ import {
   getStoredTitles,
   saveStoredTitles,
 } from './supabase';
+import { addNotification } from './notifications-store';
 
 const FALLBACK_SENTINEL = Symbol('api-fallback');
 
@@ -150,6 +151,16 @@ function handleDemoApiFallback<T>(path: string, options?: RequestInit): T {
     apps.unshift(newApp);
     saveStoredApplications(apps);
 
+    addNotification({
+      title: 'Cadastral Application Queued',
+      message: `Application ${newId} for parcel ${newApp.parcel_ref} entered verification pipeline.`,
+      category: 'application',
+      severity: 'info',
+      recipientRole: 'registrar',
+      entityRef: newId,
+      href: `/audit/${newId}`,
+    });
+
     return { id: newId } as unknown as T;
   }
 
@@ -177,6 +188,18 @@ function handleDemoApiFallback<T>(path: string, options?: RequestInit): T {
         });
         saveStoredTitles(titles);
       }
+
+      addNotification({
+        title: action === 'approve' ? 'Application Approved' : 'Application Rejected',
+        message: `Docket ${appId} (${target.parcel_ref}) was ${
+          action === 'approve' ? 'approved and deed issued' : 'rejected by Registrar'
+        }.`,
+        category: 'application',
+        severity: action === 'approve' ? 'success' : 'error',
+        recipientRole: 'all',
+        entityRef: appId,
+        href: `/audit/${appId}`,
+      });
     }
     return { success: true, status: action === 'approve' ? 'approved' : 'rejected' } as unknown as T;
   }
@@ -191,6 +214,15 @@ function handleDemoApiFallback<T>(path: string, options?: RequestInit): T {
       target.status = 'revoked';
       saveStoredTitles(titles);
     }
+    addNotification({
+      title: 'Statutory Title Revoked (LUA §28)',
+      message: `Land Title Token #${tokenId} was revoked under statutory executive order.`,
+      category: 'revocation',
+      severity: 'warning',
+      recipientRole: 'governor',
+      entityRef: `TOKEN-${tokenId}`,
+      href: '/governor',
+    });
     return { success: true, tokenId, status: 'revoked' } as unknown as T;
   }
 

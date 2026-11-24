@@ -24,6 +24,7 @@ import {
   ContractRevocationGround,
   LAND_TITLE_NFT_ADDRESS,
 } from '@/lib/contracts';
+import { addNotification } from '@/lib/notifications-store';
 import { Landmark, AlertTriangle, ShieldAlert, Sparkles, Wallet, Lock } from 'lucide-react';
 
 type RevocationGround = 'OverridingPublicInterest' | 'BreachOfStatutoryCondition';
@@ -170,6 +171,15 @@ export default function GovernorPage() {
         setSuccess(
           `Land Title Token #${result.tokenId} revoked on-chain (${LAND_TITLE_NFT_ADDRESS.slice(0, 10)}…) under ${ground}. Tx Hash: ${result.txHash}`,
         );
+        addNotification({
+          title: 'On-Chain Title Revocation Executed',
+          message: `Token #${result.tokenId} revoked under ${ground} (${result.txHash.slice(0, 12)}…).`,
+          category: 'revocation',
+          severity: 'warning',
+          recipientRole: 'governor',
+          entityRef: `TOKEN-${result.tokenId}`,
+          href: '/governor',
+        });
         setTokenId('');
         return;
       }

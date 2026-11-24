@@ -12,6 +12,7 @@ import {
   registerTitleOnChain,
   formatContractError,
 } from '@/lib/ethers-contracts';
+import { addNotification } from '@/lib/notifications-store';
 
 interface RegistrarActionsProps {
   applicationId: string;
@@ -67,6 +68,15 @@ export function RegistrarActions({
         metadataUri: `ipfs://anagu/${parcelRef || applicationId}`,
       });
       setMintNotice(`Minted Token #${result.tokenId} (${result.txHash.slice(0, 12)}…)`);
+      addNotification({
+        title: 'Title Deed NFT Minted On-Chain',
+        message: `Token #${result.tokenId} issued for ${parcelRef || applicationId} (${result.txHash.slice(0, 12)}…).`,
+        category: 'application',
+        severity: 'success',
+        recipientRole: 'all',
+        entityRef: `TOKEN-${result.tokenId}`,
+        href: `/audit/${applicationId}`,
+      });
       try {
         await apiCall(`/applications/${applicationId}/approve`, { method: 'POST' });
       } catch {

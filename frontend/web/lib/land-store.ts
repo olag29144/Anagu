@@ -19,6 +19,7 @@ import {
   parseCoordinateString,
   type LatLngPoint,
 } from './gis-utils';
+import { addNotification } from './notifications-store';
 
 export interface LandListing {
   id: string;
@@ -557,6 +558,34 @@ export function addLandListing(
   };
 
   saveLandListings([newListing, ...listings]);
+
+  addNotification({
+    title: 'Land Parcel Registered',
+    message: `${newListing.title} (${newListing.parcelRef}) submitted for ${
+      newListing.approvalStatus === 'approved' ? 'listing' : 'verification review'
+    }.`,
+    category: 'land_status',
+    severity: newListing.approvalStatus === 'approved' ? 'success' : 'info',
+    recipientRole: 'user',
+    recipientUserId: newListing.userId,
+    recipientEmail: newListing.ownerEmail,
+    entityRef: newListing.parcelRef,
+    href: '/dashboard',
+  });
+
+  if (newListing.approvalStatus === 'pending_review') {
+    addNotification({
+      title: 'New Land Awaiting Review',
+      message: `${newListing.ownerName} submitted ${newListing.title} (${newListing.parcelRef}) in ${newListing.state}.`,
+      category: 'land_status',
+      severity: 'info',
+      recipientRole: 'admin',
+      entityRef: newListing.parcelRef,
+      href: '/admin',
+      showToast: false,
+    });
+  }
+
   return newListing;
 }
 
@@ -565,8 +594,38 @@ export function updateLandListing(
   updates: Partial<LandListing>,
 ): LandListing[] {
   const listings = getLandListings();
+  const previous = listings.find((item) => item.id === id);
   const next = listings.map((item) => (item.id === id ? { ...item, ...updates } : item));
   saveLandListings(next);
+
+  if (previous && updates.approvalStatus && updates.approvalStatus !== previous.approvalStatus) {
+    if (updates.approvalStatus === 'approved') {
+      addNotification({
+        title: 'Land Title Approved',
+        message: `${previous.title} (${previous.parcelRef}) has been approved by Registry Administration.`,
+        category: 'land_status',
+        severity: 'success',
+        recipientRole: 'user',
+        recipientUserId: previous.userId,
+        recipientEmail: previous.ownerEmail,
+        entityRef: previous.parcelRef,
+        href: '/dashboard',
+      });
+    } else if (updates.approvalStatus === 'rejected') {
+      addNotification({
+        title: 'Land Registration Needs Revision',
+        message: `${previous.title} (${previous.parcelRef}) was marked for revision by Registry Administration.`,
+        category: 'land_status',
+        severity: 'error',
+        recipientRole: 'user',
+        recipientUserId: previous.userId,
+        recipientEmail: previous.ownerEmail,
+        entityRef: previous.parcelRef,
+        href: '/dashboard',
+      });
+    }
+  }
+
   return next;
 }
 
@@ -612,12 +671,41 @@ export function createPurchaseOrder(
     createdAt: new Date().toISOString(),
   };
   savePurchaseOrders([order, ...orders]);
-  updateLandListing(input.landId, {
+  const updatedListings = updateLandListing(input.landId, {
     saleStatus: 'sold',
     ...(isPaidOnChain && input.walletAddress
       ? { ownerWalletAddress: input.walletAddress }
       : {}),
   });
+  const targetLand = updatedListings.find((l) => l.id === input.landId);
+
+  addNotification({
+    title: isPaidOnChain ? 'On-Chain Land Purchase Completed' : 'Purchase Order Submitted',
+    message: `Order ${order.id} for ${order.landTitle} via ${order.paymentMethod}.`,
+    category: 'purchase',
+    severity: isPaidOnChain ? 'success' : 'warning',
+    recipientRole: 'user',
+    recipientUserId: order.buyerUserId,
+    recipientEmail: order.buyerEmail,
+    entityRef: order.id,
+    href: '/dashboard',
+  });
+
+  if (targetLand) {
+    addNotification({
+      title: 'Buyer Order Received',
+      message: `${order.buyerName} placed order ${order.id} for ${targetLand.title} (${targetLand.parcelRef}).`,
+      category: 'purchase',
+      severity: 'info',
+      recipientRole: 'admin',
+      recipientUserId: targetLand.userId,
+      recipientEmail: targetLand.ownerEmail,
+      entityRef: order.id,
+      href: '/dashboard',
+      showToast: false,
+    });
+  }
+
   return order;
 }
 

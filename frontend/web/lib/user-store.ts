@@ -5,6 +5,7 @@ import {
   type LandListing,
   type LandPurchaseOrder,
 } from './land-store';
+import { addNotification } from './notifications-store';
 
 export type UserRole = 'user' | 'registrar' | 'governor';
 
@@ -358,14 +359,38 @@ export function generateRoleInviteCode(
   };
 
   saveRoleInviteCodes([created, ...existing]);
+  addNotification({
+    title: `${created.role === 'governor' ? 'Governor' : 'Registrar'} Access Code Issued`,
+    message: `Single-use authorization code ${created.code} created${
+      created.recipientNote ? ` for ${created.recipientNote}` : ''
+    }.`,
+    category: 'access_code',
+    severity: 'info',
+    recipientRole: 'admin',
+    entityRef: created.code,
+    href: '/admin',
+  });
   return created;
 }
 
 export function revokeRoleInviteCode(codeId: string): RoleInviteCode[] {
-  const next = getRoleInviteCodes().map((c) =>
+  const existing = getRoleInviteCodes();
+  const target = existing.find((c) => c.id === codeId);
+  const next = existing.map((c) =>
     c.id === codeId && c.status === 'active' ? { ...c, status: 'revoked' as const } : c,
   );
   saveRoleInviteCodes(next);
+  if (target && target.status === 'active') {
+    addNotification({
+      title: 'Role Access Code Revoked',
+      message: `Authorization code ${target.code} was revoked by Registry Administration.`,
+      category: 'access_code',
+      severity: 'warning',
+      recipientRole: 'admin',
+      entityRef: target.code,
+      href: '/admin',
+    });
+  }
   return next;
 }
 
@@ -842,6 +867,20 @@ export function updateUserAccountStatus(
     }
   }
   saveUserAccounts(next);
+  const target = next.find((u) => u.id === userId);
+  if (target) {
+    addNotification({
+      title: status === 'suspended' ? 'Account Suspended' : 'Account Reactivated',
+      message: `${target.fullName}'s account status changed to ${status}.`,
+      category: 'account',
+      severity: status === 'suspended' ? 'warning' : 'success',
+      recipientRole: 'admin',
+      recipientUserId: target.id,
+      recipientEmail: target.email,
+      entityRef: target.id,
+      href: '/admin',
+    });
+  }
   return next;
 }
 

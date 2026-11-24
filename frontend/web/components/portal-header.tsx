@@ -27,6 +27,7 @@ import {
   ChevronDown,
   ExternalLink,
 } from 'lucide-react';
+import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 
 interface PortalHeaderProps {
   currentRoleTitle?: string;
@@ -122,8 +123,8 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
           )}
         </div>
 
-        {/* Right: Switch Role & Account info */}
-        <div className="flex items-center gap-2 sm:gap-4">
+        {/* Right: Switch Role, Notifications & Account info */}
+        <div className="flex items-center gap-2 sm:gap-3">
           {/* Quick role switches */}
           <div className="hidden lg:flex items-center gap-1 bg-[#020305] p-1 rounded-lg border border-[#1E293B]">
             {DEMO_ACCOUNTS.map((acc) => {
@@ -144,6 +145,19 @@ export function PortalHeader({ currentRoleTitle }: PortalHeaderProps) {
               );
             })}
           </div>
+
+          <NotificationCenter
+            audience={
+              activeAccount?.role === 'registrar' || registeredUser?.role === 'registrar'
+                ? 'registrar'
+                : activeAccount?.role === 'governor' || registeredUser?.role === 'governor'
+                  ? 'governor'
+                  : 'user'
+            }
+            userId={registeredUser?.id}
+            userEmail={activeAccount?.email ?? registeredUser?.email}
+            variant="portal"
+          />
 
           {/* User profile dropdown trigger */}
           <div className="relative">

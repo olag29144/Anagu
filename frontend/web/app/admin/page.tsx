@@ -69,6 +69,8 @@ import {
   Landmark,
 } from 'lucide-react';
 import { ContractRegistryPanel } from '@/components/web3/ContractRegistryPanel';
+import { NotificationCenter } from '@/components/notifications/NotificationCenter';
+import { addNotification } from '@/lib/notifications-store';
 
 const ADMIN_SESSION_KEY = 'anagu_admin_authenticated_v1';
 
@@ -282,10 +284,24 @@ export default function StandaloneAdminPage() {
   };
 
   const handleCompleteOrder = (orderId: string) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
     const updated = orders.map((o) =>
       o.id === orderId ? { ...o, status: 'completed' as const } : o,
     );
     savePurchaseOrders(updated);
+    if (targetOrder) {
+      addNotification({
+        title: 'Escrow Order Settled',
+        message: `Order ${targetOrder.id} for ${targetOrder.landTitle} was marked as completed by Registry Administration.`,
+        category: 'purchase',
+        severity: 'success',
+        recipientRole: 'user',
+        recipientUserId: targetOrder.buyerUserId,
+        recipientEmail: targetOrder.buyerEmail,
+        entityRef: targetOrder.id,
+        href: '/dashboard',
+      });
+    }
     refreshData();
     notifyAction(`Order ${orderId} marked as settled.`);
   };
@@ -921,6 +937,7 @@ export default function StandaloneAdminPage() {
                 {actionNotice}
               </span>
             )}
+            <NotificationCenter audience="admin" variant="admin" />
             <button
               type="button"
               onClick={() => setShowAddModal(true)}

@@ -90,7 +90,14 @@ import {
   Loader2,
   KeyRound,
   Landmark,
+  Bell,
 } from 'lucide-react';
+import { NotificationCenter } from '@/components/notifications/NotificationCenter';
+import { NotificationsPanel } from '@/components/notifications/NotificationsPanel';
+import {
+  getNotificationsForAudience,
+  NOTIFICATIONS_CHANGED_EVENT,
+} from '@/lib/notifications-store';
 
 type SidebarSection =
   | 'all_lands'
@@ -101,6 +108,7 @@ type SidebarSection =
   | 'payment'
   | 'contracts'
   | 'activities'
+  | 'notifications'
   | 'profile';
 
 interface ActivityEvent {
@@ -119,6 +127,7 @@ export default function UserDashboardPage() {
   const [activeUser, setActiveUser] = useState<UserAccount | null>(null);
   const [allListings, setAllListings] = useState<LandListing[]>([]);
   const [allOrders, setAllOrders] = useState<LandPurchaseOrder[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
 
   // Auth form state (when not signed in)
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
@@ -253,6 +262,28 @@ export default function UserDashboardPage() {
       window.removeEventListener('storage', handleSync);
     };
   }, []);
+
+  useEffect(() => {
+    const syncUnreadCount = () => {
+      if (!activeUser) {
+        setUnreadNotificationsCount(0);
+        return;
+      }
+      const list = getNotificationsForAudience({
+        audience: activeUser.role,
+        userId: activeUser.id,
+        userEmail: activeUser.email,
+      });
+      setUnreadNotificationsCount(list.filter((n) => !n.read).length);
+    };
+    syncUnreadCount();
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, syncUnreadCount);
+    window.addEventListener('storage', syncUnreadCount);
+    return () => {
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, syncUnreadCount);
+      window.removeEventListener('storage', syncUnreadCount);
+    };
+  }, [activeUser]);
 
   // Sync wallet account / network changes automatically
   useEffect(() => {
@@ -1134,6 +1165,7 @@ export default function UserDashboardPage() {
     payment: 'Payment & Orders',
     contracts: 'Smart Contracts (ethers.js)',
     activities: 'Activities',
+    notifications: 'Notifications',
     profile: 'Account Details',
   };
 
@@ -1188,6 +1220,13 @@ export default function UserDashboardPage() {
       label: 'Activities',
       count: activityFeed.length,
       icon: Activity,
+    },
+    {
+      id: 'notifications',
+      label: 'Notifications',
+      count: unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined,
+      icon: Bell,
+      toneClass: unreadNotificationsCount > 0 ? 'text-[#38BDF8]' : undefined,
     },
   ];
 
@@ -1453,6 +1492,13 @@ export default function UserDashboardPage() {
             <span className="hidden md:inline font-medium text-[#E2E8F0] truncate max-w-[180px]">
               {activeUser.fullName}
             </span>
+            <NotificationCenter
+              audience={activeUser.role}
+              userId={activeUser.id}
+              userEmail={activeUser.email}
+              variant="cyber"
+              onOpenFullHistory={() => selectSidebarView('notifications')}
+            />
             <button
               type="button"
               onClick={handleConnectWalletClick}
@@ -2042,6 +2088,15 @@ export default function UserDashboardPage() {
                 </div>
               )}
             </section>
+          )}
+
+          {/* VIEW 3B: Notifications Center */}
+          {activeSection === 'notifications' && (
+            <NotificationsPanel
+              audience={activeUser.role}
+              userId={activeUser.id}
+              userEmail={activeUser.email}
+            />
           )}
 
           {/* VIEW 4: Account Details */}
